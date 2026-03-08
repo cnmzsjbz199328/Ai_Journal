@@ -12,6 +12,8 @@ import { postArticleTeaser } from '@/services/publishing/twitter';
 import { revalidatePath } from 'next/cache';
 import type { SourceItem, UsageRole } from '@/types';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST() {
     try {
         // Step 1: Crawl all providers

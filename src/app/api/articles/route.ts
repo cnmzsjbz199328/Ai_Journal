@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getArticles } from '@/services/storage/article-store';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
     try {
         const { searchParams } = req.nextUrl;

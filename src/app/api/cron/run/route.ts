@@ -13,6 +13,8 @@ import { insertArticle } from '@/services/storage/article-store';
 import { postArticleTeaser } from '@/services/publishing/twitter';
 import type { SourceItem, UsageRole } from '@/types';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
     // 1. Verify Vercel Cron Secret for security
     const authHeader = req.headers.get('authorization');

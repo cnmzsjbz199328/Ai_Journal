@@ -11,12 +11,18 @@ import {
 } from '@/services/storage/comment-store';
 import { getArticleById } from '@/services/storage/article-store';
 
+export const dynamic = 'force-dynamic';
+
 interface RouteParams {
     params: Promise<{ id: string }>;
 }
 
-export async function GET(_req: NextRequest, { params }: RouteParams) {
-    const { id } = await params;
+export async function GET(
+    _req: NextRequest,
+    props: { params: Promise<{ id: string }> }
+) {
+    const params = await props.params;
+    const { id } = params;
     try {
         const commentsList = await getCommentsByArticle(id);
         return NextResponse.json({ comments: commentsList });
@@ -25,8 +31,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 }
 
-export async function POST(req: NextRequest, { params }: RouteParams) {
-    const { id } = await params;
+export async function POST(
+    req: NextRequest,
+    props: { params: Promise<{ id: string }> }
+) {
+    const params = await props.params;
+    const { id } = params;
     try {
         // Verify article exists
         const article = await getArticleById(id);

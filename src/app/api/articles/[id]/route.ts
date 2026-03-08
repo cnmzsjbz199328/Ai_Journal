@@ -10,8 +10,12 @@ interface RouteParams {
     params: Promise<{ id: string }>;
 }
 
-export async function GET(_req: NextRequest, { params }: RouteParams) {
-    const { id } = await params;
+export async function GET(
+    _req: NextRequest,
+    props: { params: Promise<{ id: string }> }
+) {
+    const params = await props.params;
+    const { id } = params;
     try {
         const article = await getArticleById(id);
         if (!article) {
@@ -23,8 +27,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 }
 
-export async function PATCH(req: NextRequest, { params }: RouteParams) {
-    const { id } = await params;
+export async function PATCH(
+    req: NextRequest,
+    props: { params: Promise<{ id: string }> }
+) {
+    const params = await props.params;
+    const { id } = params;
     try {
         const body = await req.json() as { status?: string };
         const validStatuses = ['draft', 'published', 'archived'] as const;

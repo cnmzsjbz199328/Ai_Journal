@@ -7,7 +7,15 @@ import { ArrowRight, Calendar, Clock, BookOpen } from "lucide-react";
  * Shows the featured paper and a table of contents for the latest issues.
  */
 export default async function HomePage() {
-  const { rows: publishedArticles } = await getArticles({ status: "published", limit: 6 });
+  let publishedArticles: any[] = [];
+  try {
+    const res = await getArticles({ status: "published", limit: 6 });
+    publishedArticles = res.rows;
+  } catch (error) {
+    // Graceful fallback during static build when DB is unavailable
+    console.warn("Could not fetch articles during build:", error);
+  }
+
   const featured = publishedArticles[0];
   const others = publishedArticles.slice(1);
 

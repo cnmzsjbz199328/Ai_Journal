@@ -9,6 +9,8 @@ import { db } from '@/lib/db';
 import { sourceProviders } from '@/lib/schema';
 import { desc } from 'drizzle-orm';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
     try {
         const providers = await db
