@@ -1,0 +1,1783 @@
+# AI Journal — 完备开发文档
+
+## Automated Progressive-Disclosure AI Media System
+
+> **版本**: v1.1 — MVP 阶段  
+> **日期**: 2026-03-08  
+> **状态**: 架构设计与开发规范定稿（含三项增强提案）
+
+---
+
+## 目录
+
+1. [项目概述与核心理念](#1-项目概述与核心理念)
+2. [系统总体架构](#2-系统总体架构)
+3. [渐进式披露 AI 管线](#3-渐进式披露-ai-管线)
+4. [信息源系统](#4-信息源系统)
+5. [数据层级模型](#5-数据层级模型)
+6. [数据生命周期管理](#6-数据生命周期管理)
+7. [数据源健康监控](#7-数据源健康监控)
+8. [目录结构与模块规范](#8-目录结构与模块规范)
+9. [数据库设计](#9-数据库设计)
+10. [API 设计](#10-api-设计)
+11. [前端系统](#11-前端系统)
+12. [发布系统](#12-发布系统)
+13. [调度与自动化](#13-调度与自动化)
+14. [Token 控制与成本策略](#14-token-控制与成本策略)
+15. [部署架构](#15-部署架构)
+16. [MVP 实施路线图](#16-mvp-实施路线图)
+17. [编码规范](#17-编码规范)
+18. [未来升级方向](#18-未来升级方向)
+
+---
+
+## 1. 项目概述与核心理念
+
+### 项目目标
+
+构建一个自动化 AI 期刊系统，通过**渐进式披露（Progressive Disclosure）AI 架构**，从多种信息源中筛选素材，混合不同领域的信息，生成具有创意叙事风格的恶搞文章，然后发布到网站和社交媒体平台。
+
+### 核心理念
+
+> AI **不会一次看到全部信息**，而是像一个真实编辑一样分阶段工作。
+
+```
+目录扫描 → 选题决策 → 披露正文 → 材料整理 → 创意生成
+```
+
+这种渐进式架构带来三个关键优势：
+
+| 优势 | 说明 |
+|------|------|
+| **降低 Token 成本** | 第一阶段仅处理标题级信息，通常 < 500 tokens |
+| **避免上下文溢出** | 分阶段加载，每阶段严格限制 context window |
+| **更高创意质量** | 模拟真实编辑流程：先选题、再深读、最后写作 |
+
+### 内容风格定位
+
+文章并非严肃新闻报道，而是以下风格的混合体：
+
+- **叙事性**（Narrative）：以故事线串联不同领域素材
+- **哲学性**（Philosophical）：引发思考的深层联系
+- **幽默性**（Humorous）：貌似合理但实则荒诞的逻辑跳跃
+- **散文体**（Essay-like）：优美但充满反讽的文体
+
+> [!IMPORTANT]
+> 生成的文章表面看起来逻辑严密、引经据典，实际上是对不相关领域的创意拼接。这种反差感是项目的核心价值。
+
+---
+
+## 2. 系统总体架构
+
+### 2.1 八大核心模块
+
+```mermaid
+flowchart TD
+    A["Information Sources\n(RSS / API / Blog)"] --> B["Crawler / Feed Collector"]
+    B --> B2["Dedup Filter\n(URL + Title Similarity)"]
+    B2 --> C["Metadata Layer\n(title + abstract + metadata + images)"]
+    C --> D["AI Stage 1\nContent Gatekeeper"]
+    D --> E["Content Reveal\n(abstract / full content)"]
+    E --> E2["AI Stage 1.5\nContent Curator"]
+    E2 --> F["AI Stage 2\nStory Generator"]
+    F --> G["Article Database"]
+    G --> H["Publishing System"]
+    H --> I["Website"]
+    H --> J["Social Media (X)"]
+
+    HEALTH["Source Health\nMonitor"] -.->|"监控"| B
+
+    style D fill:#f59e0b,stroke:#d97706,color:#000
+    style E2 fill:#06b6d4,stroke:#0891b2,color:#fff
+    style F fill:#8b5cf6,stroke:#7c3aed,color:#fff
+    style B2 fill:#ec4899,stroke:#db2777,color:#fff
+    style HEALTH fill:#6366f1,stroke:#4f46e5,color:#fff
+```
+
+### 2.2 模块职责划分
+
+| 模块 | 职责 | 输入 | 输出 |
+|------|------|------|------|
+| **Crawler** | 定时抓取多种信息源 | RSS/API endpoints | 标准化 `SourceItem` 对象（含配图） |
+| **Dedup Filter** | 去除重复数据（URL + 语义） | 抓取的原始数据 | 去重后的新条目 |
+| **Metadata Layer** | 管理三层数据结构 | 去重后数据 | 分层数据（catalog / abstract / content） |
+| **AI Stage 1** | 选题与构建故事框架 | 仅标题 + 来源 | 选题列表 + 故事大纲 |
+| **Content Reveal** | 按需披露选中内容 | 选题列表 | abstract / full content |
+| **AI Stage 1.5** | 整理材料（独立 AI Agent，信息防火墙隔离） | 原始内容（不含 outline） | curated_summary + key_facts |
+| **AI Stage 2** | 生成完整创意文章 | 故事大纲 + curated 内容 | 完整文章 |
+| **Publishing** | 发布到网站和社交媒体 | 文章数据 | 已发布内容 |
+| **Health Monitor** | 监控数据源健康与入库流量 | Provider 状态 | 告警 + 健康报告 |
+
+---
+
+## 3. 渐进式披露 AI 管线
+
+### 3.1 管线总览
+
+这是系统的**核心引擎**，也是与常规 AI 内容生成系统的根本区别。
+
+```mermaid
+sequenceDiagram
+    participant Crawler
+    participant Dedup as Dedup Filter
+    participant MetadataStore
+    participant Gatekeeper as AI Stage 1<br/>Content Gatekeeper
+    participant Revealer as Content Reveal
+    participant Curator as AI Stage 1.5<br/>Content Curator
+    participant Generator as AI Stage 2<br/>Story Generator
+    participant DB as Article DB
+
+    Crawler->>Dedup: 原始数据 (title, abstract, content, imageUrl)
+    Dedup->>MetadataStore: 去重后的新条目
+    MetadataStore->>Gatekeeper: 仅提供 title + source (Catalog Layer)
+    Gatekeeper->>Gatekeeper: 选择可组合主题 + 生成故事框架
+    Gatekeeper->>Revealer: 返回 selected_ids + outline
+    Revealer->>MetadataStore: 按 ID 获取 abstract / full content
+    Revealer->>Curator: 原始内容（不含 outline/theme）
+    Note over Curator: 信息防火墙：不知道 Stage 1 的选题意图
+    Curator->>Curator: 整理材料 + 提取关键事实
+    Curator->>DB: 写回 sources 表 (curated_summary, key_facts)
+    Curator->>Generator: curated content
+    Note over Generator: 接收 outline（来自 Stage 1）+ curated（来自 Stage 1.5）
+    Generator->>Generator: 生成完整文章
+    Generator->>DB: 存储文章
+```
+
+### 3.2 Stage 1: Content Gatekeeper（选题 AI）
+
+#### 输入
+
+AI 在此阶段**只能看到标题和来源**，无法看到任何正文内容。
+
+```json
+{
+  "sources": [
+    { "id": 1, "title": "Cats Hunt More Efficiently at Night", "source": "Nature", "category": "biology" },
+    { "id": 2, "title": "New Drone Warfare Strategy Emerging", "source": "BBC", "category": "military" },
+    { "id": 3, "title": "Arctic Ice Melting Faster Than Predicted", "source": "ScienceDaily", "category": "climate" },
+    { "id": 4, "title": "Ancient Philosophy Resurfaces in AI Ethics Debate", "source": "ArXiv", "category": "philosophy" },
+    { "id": 5, "title": "Coffee Prices Surge Due to Supply Chain Disruption", "source": "Bloomberg", "category": "economics" }
+  ]
+}
+```
+
+#### Prompt 设计
+
+```text
+You are the editor-in-chief of a satirical academic journal. 
+
+Below is a catalog of today's news — you can ONLY see titles and sources.
+You do NOT have access to article content yet.
+
+Your task:
+1. Select 3-5 sources that can be creatively combined into a single narrative
+2. The combination should be UNEXPECTED — mix unrelated domains
+3. Generate a story theme and a 5-section outline
+4. The article should appear scholarly but be subtly absurd
+
+Respond in JSON:
+{
+  "selected_ids": [1, 2],
+  "theme": "Predator strategies in nature and modern warfare",
+  "outline": [
+    "Introduction: Strategy and Instinct",
+    "The Hunting Tactics of Cats",
+    "Precision Warfare and Drone Technology",
+    "Psychological Aspects of the Hunter",
+    "Reflections on Nature and Human Conflict"
+  ],
+  "rationale": "Brief explanation of why these sources were combined"
+}
+```
+
+#### 输出
+
+```json
+{
+  "selected_ids": [1, 2],
+  "theme": "Predator strategies in nature and modern warfare",
+  "outline": [
+    "Introduction: Strategy and Instinct",
+    "The Hunting Tactics of Cats",
+    "Precision Warfare and Drone Technology",
+    "Psychological Aspects of the Hunter",
+    "Reflections on Nature and Human Conflict"
+  ],
+  "rationale": "Both deal with predatory efficiency — one biological, one technological"
+}
+```
+
+> [!NOTE]
+> 此阶段的核心约束：AI **绝不能**接触正文内容。这确保了选题完全基于标题级别的创意联想，而非对内容细节的分析。
+
+### 3.3 Content Reveal（内容披露）
+
+系统根据 Stage 1 的 `selected_ids`，**按需**加载被选中素材的详细内容。这是一个纯数据操作，不涉及 AI。
+
+#### 披露策略
+
+```mermaid
+flowchart TD
+    A["selected_ids from Stage 1"] --> B{"Source has full content?"}
+    B -->|Yes| C["Truncate to max_tokens_per_source"]
+    B -->|No| D["Use abstract as content"]
+    C --> E["Compile context package"]
+    D --> E
+    E --> F["Send to Stage 1.5 Curator"]
+```
+
+#### Token 预算配置
+
+```typescript
+const REVEAL_CONFIG = {
+  maxSourcesPerArticle: 5,       // 最多选取的源数量
+  maxTokensPerSource: 1000,      // 每个源的最大 token 数
+  maxTotalContextTokens: 4000,   // 总上下文 token 上限
+  preferAbstract: true,          // 优先使用 abstract（更节省 token）
+};
+```
+
+### 3.4 Stage 1.5: Content Curator（材料整理 AI）
+
+> [!IMPORTANT]
+> **信息防火墙设计**：Content Curator 是一个**完全独立的 AI Agent**，它不知道 Stage 1 生成的主题和大纲。这确保材料整理的客观性——避免上游选题决策对材料产生递归偏见。
+
+#### 职责
+
+- 控制内容长度（将冗长内容压缩为精炼摘要）
+- 评估内容丰富性（标记内容质量）
+- 提取关键事实点（结构化数据）
+- 保留意外细节和生动数据（这些是 Stage 2 创作的核心素材）
+
+#### 三个 AI Agent 的信息隔离关系
+
+| Agent | 知道什么 | 不知道什么 |
+|-------|---------|----------|
+| **Gatekeeper** (Stage 1) | 标题 + 来源 | 正文内容 |
+| **Curator** (Stage 1.5) | 选中素材的原始正文 | 主题、大纲（信息防火墙） |
+| **Generator** (Stage 2) | 主题大纲 + curated 摘要 | 原始正文 |
+
+#### Prompt 设计
+
+```text
+You are a research assistant preparing source materials for editorial review.
+
+Below are several source articles. For EACH article, your task is:
+
+1. Summarize the core content in 100-200 words
+2. Extract 3-5 key facts or data points (as a bullet list)
+3. Rate the content richness: poor / fair / good / rich
+4. If the content is too short (< 50 words), flag it as "insufficient"
+
+Rules:
+- Be OBJECTIVE — do not editorialize or interpret
+- Preserve surprising details, unusual statistics, or vivid examples
+- Do NOT speculate about how these sources might be related
+- Do NOT add information that is not in the source
+
+Respond in JSON:
+{
+  "sources": [
+    {
+      "id": "source-uuid",
+      "curated_summary": "...",
+      "key_facts": ["fact1", "fact2", "fact3"],
+      "content_quality": "good",
+      "word_count": 150
+    }
+  ]
+}
+```
+
+> [!NOTE]
+> Prompt 中明确要求 **"Do NOT speculate about how these sources might be related"** —— 这是信息防火墙的具体实现。Curator 被限制为纯粹的材料整理角色。
+
+#### 输出存储
+
+Curator 的输出直接写回 `sources` 表（不新建表）：
+
+```sql
+-- sources 表新增字段
+curated_summary    TEXT              -- Curator AI 整理后的摘要
+```
+
+原始数据（`abstract`, `content`）保持不变，可溯源。Stage 2 优先使用 `curated_summary`，若无则回退到 `abstract`。
+
+#### 编排层调用示例
+
+```typescript
+// index.ts 编排层
+async function runPipeline(sources: SourceItem[]) {
+  // 1. Stage 1: Gatekeeper AI — 选题
+  const { selected_ids, outline } = await gatekeeper.select(catalog);
+  
+  // 2. Content Reveal — 加载选中素材的原始内容
+  const rawContent = revealer.reveal(sources, selected_ids);
+  
+  // 3. Stage 1.5: Curator AI — 整理材料（独立 AI 调用）
+  //    注意：不传入 outline，保持信息防火墙
+  const curatedContent = await curator.curate(rawContent);
+  
+  // 4. 写回 sources 表
+  await sourceStore.updateCurated(selected_ids, curatedContent);
+  
+  // 5. Stage 2: Generator AI — 创作文章
+  //    使用 outline（来自 Stage 1）+ curatedContent（来自 Stage 1.5）
+  const article = await generator.write(outline, curatedContent);
+}
+```
+
+### 3.5 Stage 2: Story Generator（创作 AI）
+
+#### 输入
+
+Stage 2 接收两个来源的数据：`outline`（来自 Stage 1）和 `curated content`（来自 Stage 1.5）。
+
+```json
+{
+  "theme": "Predator strategies in nature and modern warfare",
+  "outline": ["..."],
+  "sources": [
+    {
+      "id": 1,
+      "title": "Cats Hunt More Efficiently at Night",
+      "curated_summary": "Researchers discovered that domestic cats adjust their hunting strategies...",
+      "key_facts": ["87% success rate in darkness", "Whisker-based spatial mapping"],
+      "imageUrl": "https://example.com/cat-hunting.jpg"
+    },
+    {
+      "id": 2,
+      "title": "New Drone Warfare Strategy Emerging",
+      "curated_summary": "Military analysts report that autonomous drone swarms...",
+      "key_facts": ["Swarm coordination latency < 50ms", "93% target acquisition rate"],
+      "imageUrl": "https://example.com/drone.jpg"
+    }
+  ]
+}
+```
+
+#### Prompt 设计
+
+```text
+You are a writer for a satirical academic journal.
+
+You have been given:
+- A story theme
+- A 5-section outline
+- Curated source materials (summaries + key facts)
+- Source images (use for visual context, reference in article)
+
+Your task:
+1. Write a full article (800-1500 words) following the outline
+2. The article must APPEAR scholarly and well-researched
+3. Draw real facts from the source materials
+4. Create unexpected logical connections between unrelated domains
+5. The tone should be deadpan serious — the humor comes from juxtaposition
+6. Include at least one fabricated-but-plausible citation
+7. End with a thought-provoking (but absurd) conclusion
+
+Format: Markdown with sections matching the outline.
+```
+
+#### 输出示例
+
+```markdown
+# The Silent Hunters: From Cats to Combat Drones
+
+## 1. Introduction: Strategy and Instinct
+
+Cats do not attend military academies, yet their nightly hunts reveal strategies 
+that military tacticians would admire. In a world where both feline and silicon 
+predators stalk their prey with increasing precision, one must ask: 
+who is truly learning from whom?
+
+## 2. The Hunting Tactics of Cats
+...
+```
+
+---
+
+## 4. 信息源系统
+
+### 4.1 Supported Sources（MVP）
+
+| Source | Type | Category | 抓取方式 | 频率 |
+|--------|------|----------|----------|------|
+| BBC News | RSS | General | RSS Feed | 1h |
+| TechCrunch | RSS | Technology | RSS Feed | 1h |
+| Nature | RSS/API | Science | RSS Feed | 2h |
+| ArXiv | API | Research | REST API | 6h |
+| ScienceDaily | RSS | Science | RSS Feed | 2h |
+| Hacker News | API | Technology | REST API | 30min |
+| The Onion | RSS | Satire | RSS Feed | 2h |
+
+### 4.2 Source Provider 接口
+
+```typescript
+interface SourceProvider {
+  readonly name: string;
+  readonly category: string;
+  
+  /** 抓取并返回标准化数据 */
+  fetch(): Promise<SourceItem[]>;
+  
+  /** 获取指定 ID 的完整内容（支持延迟加载） */
+  getContent(id: string): Promise<string | null>;
+}
+```
+
+### 4.3 Source 注册机制
+
+采用工厂模式，受现有 `NewsFactory` 启发：
+
+```typescript
+class SourceRegistry {
+  private providers: Map<string, SourceProvider> = new Map();
+
+  register(provider: SourceProvider): void {
+    this.providers.set(provider.name, provider);
+  }
+
+  getAll(): SourceProvider[] {
+    return Array.from(this.providers.values());
+  }
+
+  getByCategory(category: string): SourceProvider[] {
+    return this.getAll().filter(p => p.category === category);
+  }
+}
+```
+
+### 4.4 新增 Source 清单
+
+> [!TIP]
+> 添加新的信息源时，只需实现 `SourceProvider` 接口并调用 `registry.register()` 即可。无需修改任何核心管线代码。
+
+---
+
+## 5. 数据层级模型
+
+### 5.1 三层数据结构
+
+渐进式披露的数据基础是三层分离的信息结构：
+
+```mermaid
+graph LR
+    subgraph "Layer 1: Catalog"
+        L1["title\nsource\ncategory\ntimestamp"]
+    end
+    subgraph "Layer 2: Abstract"
+        L2["abstract\n(50-200 tokens)"]
+    end
+    subgraph "Layer 3: Full Content"
+        L3["full body text\nimages\nlinks"]
+    end
+
+    L1 -->|"AI Stage 1 可见"| L1
+    L2 -->|"Content Reveal 按需加载"| L2
+    L3 -->|"仅在必要时加载"| L3
+
+    style L1 fill:#22c55e,stroke:#16a34a,color:#fff
+    style L2 fill:#f59e0b,stroke:#d97706,color:#000
+    style L3 fill:#ef4444,stroke:#dc2626,color:#fff
+```
+
+### 5.2 SourceItem 数据模型
+
+```typescript
+/** 原始抓取的信息条目 */
+interface SourceItem {
+  id: string;                    // UUID
+  title: string;                 // Layer 1
+  source: string;                // Layer 1 — 来源名称 (e.g., "Nature")
+  category: string;              // Layer 1 — 领域分类
+  url: string;                   // 原始链接
+  timestamp: string;             // ISO 8601 时间戳
+  abstract: string | null;       // Layer 2 — 摘要（可能为空）
+  content: string | null;        // Layer 3 — 全文（可能为空）
+  imageUrl: string | null;       // 来源的主图 (og:image 或 RSS media)
+
+  // —— Curator AI 写入的字段 ——
+  curatedSummary: string | null;       // Curator 整理后的摘要
+
+  // —— 重用管理字段 ——
+  usageCount: number;                  // 被使用次数
+  usageWeight: number;                 // 当前权重 (0.0 ~ 1.0)
+  lastUsedAt: string | null;           // 最近一次被使用的时间
+  cooldownUntil: string | null;        // 冷却期结束时间
+  usageRoles: string[];                // 历史使用角色记录
+  status: 'fresh' | 'active' | 'cooling' | 'archived';
+
+  // —— 去重字段 ——
+  titleHash: string | null;            // 归一化标题的 hash
+  duplicateOf: string | null;          // 若是重复的，指向原条目 ID
+}
+```
+
+### 5.3 层级访问控制
+
+```typescript
+/** 根据阶段返回不同层级的数据 */
+class DataLayerAccessor {
+  /** Stage 1: 只返回 Catalog 层（按 usageWeight 加权排序，过滤冷却中和已归档的条目） */
+  getCatalog(items: SourceItem[]): CatalogEntry[] {
+    return items
+      .filter(i => i.status !== 'cooling' && i.status !== 'archived')
+      .filter(i => !i.duplicateOf)  // 不展示重复条目
+      .sort((a, b) => b.usageWeight - a.usageWeight)
+      .map(item => ({
+        id: item.id,
+        title: item.title,
+        source: item.source,
+        category: item.category,
+        previousRoles: item.usageRoles, // 供 Stage 1 参考角色历史
+      }));
+  }
+
+  /** Content Reveal: 返回选中条目的 Abstract + Content + Image */
+  revealContent(items: SourceItem[], selectedIds: string[], config: RevealConfig): RevealedContent[] {
+    return items
+      .filter(item => selectedIds.includes(item.id))
+      .map(item => ({
+        id: item.id,
+        title: item.title,
+        content: this.truncateToTokenLimit(
+          item.content || item.abstract || '',
+          config.maxTokensPerSource
+        ),
+        imageUrl: item.imageUrl,
+      }));
+  }
+}
+```
+
+---
+
+## 6. 数据生命周期管理
+
+### 6.1 防重复数据机制
+
+#### Level 1：URL 精确去重
+
+```typescript
+// crawler/dedup.ts
+/** 批量检查哪些 URL 是新的（不在数据库中） */
+async function filterNewItems(items: SourceItem[]): Promise<SourceItem[]> {
+  const urls = items.map(i => i.url);
+  const existing = await db.select('url').from('sources').whereIn('url', urls);
+  const existingUrls = new Set(existing.map(e => e.url));
+  return items.filter(item => !existingUrls.has(item.url));
+}
+```
+
+#### Level 2：标题语义去重
+
+```typescript
+// utils/dedup.ts
+/** 标题归一化：去停用词、小写、排序 */
+function normalizeTitle(title: string): string {
+  const stopWords = new Set([
+    'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for',
+    'of', 'and', 'or', 'but', 'is', 'are', 'was', 'were',
+    'new', 'says', 'shows', 'finds', 'reveals'
+  ]);
+  return title.toLowerCase().replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/).filter(w => !stopWords.has(w)).sort().join(' ');
+}
+
+/** Jaccard 相似度 > 0.6 视为同一事件 */
+function titleSimilarity(a: string, b: string): number {
+  const setA = new Set(normalizeTitle(a).split(' '));
+  const setB = new Set(normalizeTitle(b).split(' '));
+  const intersection = new Set([...setA].filter(x => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  return intersection.size / union.size;
+}
+
+const SIMILARITY_THRESHOLD = 0.6;
+```
+
+#### 去重决策流程
+
+```mermaid
+flowchart TD
+    A["Crawler 抓取到新条目"] --> B{"URL 已存在？"}
+    B -->|Yes| C["跳过 (完全重复)"]
+    B -->|No| D{"title_hash 已存在？\n(近 7 天)"}
+    D -->|Yes| E{"title_similarity > 0.6?"}
+    D -->|No| G["正常入库\nstatus = 'fresh'"]
+    E -->|Yes| F["入库但标记\nduplicate_of = 原条目 ID"]
+    E -->|No| G
+
+    style C fill:#ef4444,stroke:#dc2626,color:#fff
+    style F fill:#f59e0b,stroke:#d97706,color:#000
+    style G fill:#22c55e,stroke:#16a34a,color:#fff
+```
+
+> [!NOTE]
+> **语义重复的条目仍然入库**但标记 `duplicate_of`。不同来源对同一事件的报道角度不同，Stage 1 不展示重复条目，但 Content Reveal 可额外提供这些作为"多视角补充"。
+
+### 6.2 素材重用策略
+
+#### 机制 1：使用衰减权重（Decay Weight）
+
+```
+每条源数据的 "可用权重"，初始为 1.0：
+
+weight_after = weight_before × DECAY_FACTOR (0.3)
+
+第 1 次使用: weight = 1.0      (高优先)
+第 2 次使用: weight = 0.3      (低优先，但仍有机会)
+第 3 次使用: weight = 0.09     (极低，几乎不会被选中)
+第 4 次使用: weight = 0.027    (实际上已被淘汰)
+```
+
+#### 机制 2：冷却期（Cooldown Period）
+
+```typescript
+const COOLDOWN_DAYS = {
+  1: 7,     // 第 1 次使用后冷却 7 天
+  2: 30,    // 第 2 次使用后冷却 30 天
+  3: 90,    // 第 3 次使用后冷却 90 天
+} as const;
+
+const MAX_USAGE_COUNT = 3;  // >= 4 次后永久归档
+```
+
+#### 机制 3：角色轮换（Role Rotation）
+
+即使同一素材被重用，AI 以不同"角色"使用：
+
+| 使用次数 | 角色 | 说明 |
+|---------|------|------|
+| 第 1 次 | `primary` | 文章的核心讨论对象 |
+| 第 2 次 | `secondary` | 次要参考/对比 |
+| 第 3 次 | `easter_egg` | 文章末尾的一句带过 |
+
+Stage 1 Prompt 中增加规则：
+```text
+- If a source has previous_roles, assign a DIFFERENT role than before
+- Prefer fresh (unused) sources as "primary" subjects
+```
+
+### 6.3 素材生命周期
+
+```mermaid
+stateDiagram-v2
+    [*] --> Fresh: 抓取入库 (去重后)
+    Fresh --> Active: weight=1.0
+    Active --> Cooling: 被 Stage 1 选中使用
+    Cooling --> Active: 冷却期结束 (weight×0.3)
+    Active --> Archived: usage_count >= 3 或 weight < 0.05
+    Archived --> [*]: 不再参与选题
+
+    note right of Fresh: 新鲜素材 最高优先级
+    note right of Cooling: 冷却中 不可见
+    note right of Archived: 已归档 但仍可被文章引用
+```
+
+### 6.4 健康平衡指标
+
+```
+健康状态 = 入口流量 > 出口淘汰量 + 当日消耗量
+
+具体数值：
+  每日入库（去重后）：10-20 条
+  每日消耗：3-5 条
+  每日自然淘汰：~2-5 条
+  净增长：+3-12 条/天 → 池子保持健康
+  活跃池大小维持在：50-200 条
+```
+
+---
+
+## 7. 数据源健康监控
+
+### 7.1 Source Health Monitor
+
+```typescript
+interface SourceHealthMetrics {
+  newSourcesLast24h: number;           // 过去 24h 新入库数量
+  activePoolSize: number;               // 当前活跃素材池大小
+  contributionByProvider: Record<string, number>; // 各源贡献度
+  status: 'healthy' | 'warning' | 'critical';
+}
+
+const HEALTH_THRESHOLDS = {
+  minDailyInflow: 10,           // < 10 条/天 → warning
+  criticalDailyInflow: 3,       // < 3 条/天 → critical
+  minActivePool: 50,            // < 50 条 → warning
+  criticalActivePool: 20,       // < 20 条 → critical
+  minActiveSources: 3,          // 至少 3 个源有贡献
+} as const;
+```
+
+### 7.2 Provider 故障检测
+
+```typescript
+interface ProviderHealthCheck {
+  providerName: string;
+  lastSuccessfulCrawl: Date | null;
+  consecutiveFailures: number;
+  averageItemsPerCrawl: number;
+  status: 'active' | 'degraded' | 'dead';
+}
+
+// 连续失败 3 次 → degraded（告警）
+// 连续失败 10 次 → dead（停止尝试，通知管理员）
+```
+
+### 7.3 source_providers 追踪表
+
+```sql
+CREATE TABLE source_providers (
+  id                    VARCHAR(50) PRIMARY KEY,  -- e.g., 'bbc', 'nature'
+  name                  VARCHAR(100) NOT NULL,
+  url                   TEXT NOT NULL,
+  category              VARCHAR(50) NOT NULL,
+  crawl_frequency       VARCHAR(20) NOT NULL,     -- '1h', '6h', '24h'
+  
+  -- 健康追踪
+  last_crawl_at         TIMESTAMPTZ,
+  last_success_at       TIMESTAMPTZ,
+  consecutive_failures  INTEGER DEFAULT 0,
+  total_items_crawled   INTEGER DEFAULT 0,
+  status                VARCHAR(20) DEFAULT 'active', -- active / degraded / dead
+  
+  created_at            TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 7.4 信息源扩展策略
+
+当入库量不足时，优先添加以下高产源：
+
+| 阶段 | 信息源 | 预计产量 |
+|------|--------|---------|
+| **Phase 2** | Reddit (r/science, r/technology) | 极高 |
+| **Phase 2** | The Guardian RSS | 高 |
+| **Phase 2** | Wired | 中 |
+| **Phase 3** | 公共数据集 API (data.gov, WHO) | 中 |
+| **Phase 3** | 学术预印本 (bioRxiv, medRxiv) | 高 |
+
+> [!TIP]
+> 信息源应覆盖尽可能多的**不相关领域**。领域越不相关，创意组合的空间越大。
+
+---
+
+## 8. 目录结构与模块规范
+
+### 8.1 项目目录结构
+
+```
+ai-journal/
+├── apps/
+│   ├── web/                           # Next.js 前端
+│   │   ├── src/
+│   │   │   ├── app/                   # App Router
+│   │   │   │   ├── page.tsx           # 首页
+│   │   │   │   ├── layout.tsx         # 全局布局
+│   │   │   │   ├── article/
+│   │   │   │   │   └── [id]/
+│   │   │   │   │       └── page.tsx   # 文章详情页
+│   │   │   │   ├── category/
+│   │   │   │   │   └── [slug]/
+│   │   │   │   │       └── page.tsx   # 分类页
+│   │   │   │   └── search/
+│   │   │   │       └── page.tsx       # 搜索页
+│   │   │   ├── components/            # UI 组件
+│   │   │   │   ├── ArticleCard.tsx
+│   │   │   │   ├── CategoryNav.tsx
+│   │   │   │   ├── SearchBar.tsx
+│   │   │   │   └── Footer.tsx
+│   │   │   └── lib/                   # 工具函数
+│   │   │       └── api.ts
+│   │   ├── tailwind.config.ts
+│   │   ├── next.config.js
+│   │   └── package.json
+│   │
+│   └── api/                           # 后端 API (Node.js / Hono)
+│       ├── src/
+│       │   ├── index.ts               # 入口 + 路由编排
+│       │   ├── config/
+│       │   │   └── constants.ts       # 常量配置
+│       │   ├── types/
+│       │   │   ├── source.ts          # 数据源相关类型
+│       │   │   ├── article.ts         # 文章相关类型
+│       │   │   └── ai.ts              # AI 管线相关类型
+│       │   ├── services/
+│       │   │   ├── crawler/           # 数据抓取模块
+│       │   │   │   ├── index.ts       # SourceRegistry + 统一入口
+│       │   │   │   ├── base-rss.ts    # RSS 基类
+│       │   │   │   ├── bbc.ts         # BBC Provider
+│       │   │   │   ├── nature.ts      # Nature Provider
+│       │   │   │   ├── arxiv.ts       # ArXiv Provider
+│       │   │   │   └── hacker-news.ts # HN Provider
+│       │   │   ├── ai/               # AI 管线模块
+│       │   │   │   ├── gatekeeper.ts  # Stage 1: Content Gatekeeper
+│       │   │   │   ├── curator.ts     # Stage 1.5: Content Curator
+│       │   │   │   ├── revealer.ts    # Content Reveal 逻辑
+│       │   │   │   └── generator.ts   # Stage 2: Story Generator
+│       │   │   ├── storage/           # 数据持久化
+│       │   │   │   ├── source-store.ts
+│       │   │   │   └── article-store.ts
+│       │   │   └── publishing/        # 发布模块
+│       │   │       ├── website.ts     # 网站发布
+│       │   │       └── social.ts      # 社交媒体发布
+│       │   └── utils/
+│       │       ├── token-counter.ts   # Token 计数工具
+│       │       ├── text-truncator.ts  # 文本截断工具
+│       │       └── dedup.ts           # 去重工具
+│       ├── package.json
+│       └── tsconfig.json
+│
+├── packages/                          # 共享包（可选，monorepo 模式）
+│   └── shared/
+│       ├── types.ts                   # 共享类型定义
+│       └── constants.ts               # 共享常量
+│
+├── database/
+│   └── migrations/                    # 数据库迁移文件
+│       ├── 001_create_sources.sql
+│       ├── 002_create_articles.sql
+│       ├── 003_create_social_posts.sql
+│       └── 004_create_source_providers.sql
+│
+├── .env.example                       # 环境变量模板
+├── docker-compose.yml                 # 本地开发环境
+├── package.json                       # Workspace 根配置
+└── README.md
+```
+
+### 8.2 模块依赖关系
+
+```mermaid
+graph TD
+    subgraph "编排层"
+        INDEX["index.ts\n(路由 + 编排)"]
+    end
+
+    subgraph "服务层"
+        CRAWLER["crawler/\n(数据抓取 + 去重)"]
+        AI_GATE["ai/gatekeeper.ts\n(Stage 1: 选题 AI)"]
+        AI_CURATOR["ai/curator.ts\n(Stage 1.5: 材料整理 AI)"]
+        AI_REVEAL["ai/revealer.ts\n(内容披露)"]
+        AI_GEN["ai/generator.ts\n(Stage 2: 创作 AI)"]
+        STORAGE["storage/\n(数据持久化)"]
+        PUB["publishing/\n(发布)"]
+        HEALTH["health/\n(数据源监控)"]
+    end
+
+    subgraph "基础设施层"
+        TYPES["types/\n(类型定义)"]
+        CONFIG["config/\n(常量配置)"]
+        UTILS["utils/\n(工具函数 + 去重)"]
+    end
+
+    INDEX --> CRAWLER
+    INDEX --> AI_GATE
+    INDEX --> AI_CURATOR
+    INDEX --> AI_REVEAL
+    INDEX --> AI_GEN
+    INDEX --> STORAGE
+    INDEX --> PUB
+    INDEX --> HEALTH
+
+    CRAWLER --> TYPES
+    CRAWLER --> CONFIG
+    CRAWLER --> UTILS
+    AI_GATE --> TYPES
+    AI_GATE --> CONFIG
+    AI_CURATOR --> TYPES
+    AI_REVEAL --> TYPES
+    AI_REVEAL --> UTILS
+    AI_GEN --> TYPES
+    AI_GEN --> CONFIG
+    STORAGE --> TYPES
+    PUB --> TYPES
+    PUB --> CONFIG
+    HEALTH --> TYPES
+
+    style INDEX fill:#3b82f6,stroke:#2563eb,color:#fff
+    style AI_GATE fill:#f59e0b,stroke:#d97706,color:#000
+    style AI_CURATOR fill:#06b6d4,stroke:#0891b2,color:#fff
+    style AI_GEN fill:#8b5cf6,stroke:#7c3aed,color:#fff
+    style HEALTH fill:#6366f1,stroke:#4f46e5,color:#fff
+```
+
+> [!WARNING]
+> **跨服务调用禁令**：`services/` 下的子模块之间**禁止相互 import**。所有数据流转由编排层（[index.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/index.ts)）负责协调。
+
+---
+
+## 9. 数据库设计
+
+### 9.1 技术选型
+
+| 方案 | 推荐级别 | 理由 |
+|------|----------|------|
+| **Supabase (PostgreSQL)** | ⭐⭐⭐ MVP 首选 | 免费层够用，自带 REST API，与 Vercel 集成良好 |
+| Neon (PostgreSQL) | ⭐⭐ 备选 | Serverless PostgreSQL，冷启动快 |
+| PlanetScale (MySQL) | ⭐ 可选 | 无外键但适合分布式 |
+
+### 9.2 表设计
+
+#### sources — 数据源条目表
+
+```sql
+CREATE TABLE sources (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title         TEXT NOT NULL,
+  abstract      TEXT,
+  content       TEXT,
+  source_name   VARCHAR(100) NOT NULL,       -- e.g., "Nature", "BBC"
+  url           TEXT NOT NULL UNIQUE,         -- 去重依据
+  category      VARCHAR(50) NOT NULL,         -- e.g., "science", "technology"
+  author        VARCHAR(200),
+  tags          TEXT[],                        -- PostgreSQL 数组
+  language      VARCHAR(10) DEFAULT 'en',
+  word_count    INTEGER,
+  has_full_content BOOLEAN DEFAULT false,
+  crawled_at    TIMESTAMPTZ DEFAULT NOW(),
+  published_at  TIMESTAMPTZ,                  -- 原始发布时间
+  
+  -- 配图字段
+  image_url     TEXT,                          -- 主图 (og:image / RSS media)
+  
+  -- Curator AI 字段
+  curated_summary    TEXT,                     -- Curator 整理后的摘要
+  
+  -- 重用管理字段
+  usage_count       INTEGER DEFAULT 0,
+  usage_weight      DECIMAL(5,4) DEFAULT 1.0,  -- 当前权重 (0.0 ~ 1.0)
+  last_used_at      TIMESTAMPTZ,
+  cooldown_until    TIMESTAMPTZ,               -- 冷却期结束时间
+  usage_roles       JSONB DEFAULT '[]',        -- 历史使用角色记录
+  status            VARCHAR(20) DEFAULT 'fresh', -- fresh / active / cooling / archived
+  
+  -- 去重字段
+  title_hash      VARCHAR(64),                 -- 归一化标题的 hash
+  duplicate_of    UUID REFERENCES sources(id), -- 若是重复的，指向原条目
+  
+  CONSTRAINT sources_url_unique UNIQUE (url)
+);
+
+CREATE INDEX idx_sources_category ON sources(category);
+CREATE INDEX idx_sources_crawled_at ON sources(crawled_at DESC);
+CREATE INDEX idx_sources_source_name ON sources(source_name);
+CREATE INDEX idx_sources_status ON sources(status);
+CREATE INDEX idx_sources_usage_weight ON sources(usage_weight DESC);
+CREATE INDEX idx_sources_title_hash ON sources(title_hash);
+```
+
+#### articles — 生成文章表
+
+```sql
+CREATE TABLE articles (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title         TEXT NOT NULL,
+  content       TEXT NOT NULL,                  -- Markdown 格式
+  theme         TEXT NOT NULL,                  -- 故事主题
+  outline       JSONB NOT NULL,                 -- 故事大纲 (string[])
+  source_ids    UUID[] NOT NULL,                -- 使用的源 ID
+  category      VARCHAR(50),
+  style         VARCHAR(50) DEFAULT 'narrative', -- narrative / philosophical / humorous
+  word_count    INTEGER,
+  ai_model      VARCHAR(100),                   -- 使用的 AI 模型
+  
+  -- 配图
+  cover_image   TEXT,                            -- 封面图 URL
+  source_images JSONB,                           -- 各源配图 [{sourceId, imageUrl}]
+  
+  -- Stage 1 元数据
+  gatekeeper_rationale  TEXT,                   -- 选题理由
+  
+  -- 状态管理
+  status        VARCHAR(20) DEFAULT 'draft',    -- draft / published / archived
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  published_at  TIMESTAMPTZ,
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_articles_status ON articles(status);
+CREATE INDEX idx_articles_category ON articles(category);
+CREATE INDEX idx_articles_created_at ON articles(created_at DESC);
+```
+
+#### social_posts — 社交媒体发布记录表
+
+```sql
+CREATE TABLE social_posts (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  article_id    UUID NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  platform      VARCHAR(20) NOT NULL,           -- "twitter" / "x" / "mastodon"
+  post_content  TEXT NOT NULL,                  -- 发布的文本内容
+  post_url      TEXT,                           -- 发布后的链接
+  status        VARCHAR(20) DEFAULT 'pending',  -- pending / posted / failed
+  error_message TEXT,
+  posted_at     TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_social_posts_article_id ON social_posts(article_id);
+CREATE INDEX idx_social_posts_status ON social_posts(status);
+```
+
+#### comments — 游客评论表
+
+```sql
+CREATE TABLE comments (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  article_id    UUID NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  author_name   VARCHAR(100) DEFAULT '游客',    -- 用户自定义名称，默认"游客"
+  content       TEXT NOT NULL,
+  
+  -- 反垃圾字段
+  ip_hash       VARCHAR(64),                      -- IP 哈希（用于限流，不存原始 IP）
+  is_hidden     BOOLEAN DEFAULT false,            -- 管理员可隐藏
+  
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_comments_article_id ON comments(article_id);
+CREATE INDEX idx_comments_created_at ON comments(created_at DESC);
+```
+
+> [!NOTE]
+> **反垃圾策略（MVP）：**
+> - 同一 IP 每分钟最多 1 条评论（基于 `ip_hash` 限流）
+> - Honeypot 隐藏字段（前端设置一个隐藏的 input，人类不会填，机器人会填）
+> - 评论内容最短 2 字、最长 1000 字
+> - 不存储原始 IP，只存 hash（隐私保护）
+
+#### pipeline_runs — 管线执行日志表
+
+```sql
+CREATE TABLE pipeline_runs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  started_at      TIMESTAMPTZ DEFAULT NOW(),
+  completed_at    TIMESTAMPTZ,
+  status          VARCHAR(20) DEFAULT 'running',  -- running / completed / failed
+  
+  -- 各阶段统计
+  sources_crawled     INTEGER DEFAULT 0,
+  sources_selected    INTEGER DEFAULT 0,
+  article_id          UUID REFERENCES articles(id),
+  
+  -- Token 消耗追踪
+  stage1_tokens_used    INTEGER DEFAULT 0,
+  stage1_5_tokens_used  INTEGER DEFAULT 0,
+  stage2_tokens_used    INTEGER DEFAULT 0,
+  total_cost_usd        DECIMAL(10, 6),
+  
+  error_log       TEXT
+);
+```
+
+### 9.3 ER 图
+
+```mermaid
+erDiagram
+    SOURCES {
+        uuid id PK
+        text title
+        text abstract
+        text content
+        text image_url
+        varchar source_name
+        text url UK
+        varchar category
+        text curated_summary
+        decimal usage_weight
+        varchar status
+        varchar title_hash
+        uuid duplicate_of FK
+    }
+    
+    SOURCE_PROVIDERS {
+        varchar id PK
+        varchar name
+        text url
+        varchar category
+        integer consecutive_failures
+        varchar status
+    }
+    
+    ARTICLES {
+        uuid id PK
+        text title
+        text content
+        text theme
+        jsonb outline
+        text cover_image
+        varchar status
+        timestamptz created_at
+    }
+    
+    SOCIAL_POSTS {
+        uuid id PK
+        uuid article_id FK
+        varchar platform
+        text post_content
+        varchar status
+    }
+    
+    COMMENTS {
+        uuid id PK
+        uuid article_id FK
+        varchar author_name
+        text content
+        boolean is_hidden
+        timestamptz created_at
+    }
+    
+    PIPELINE_RUNS {
+        uuid id PK
+        varchar status
+        uuid article_id FK
+        integer stage1_tokens_used
+        integer stage1_5_tokens_used
+        integer stage2_tokens_used
+    }
+    
+    SOURCE_PROVIDERS ||--o{ SOURCES : "produces"
+    ARTICLES ||--o{ SOCIAL_POSTS : "publishes to"
+    ARTICLES ||--o{ COMMENTS : "has"
+    ARTICLES }o--o{ SOURCES : "references"
+    PIPELINE_RUNS ||--o| ARTICLES : "generates"
+    SOURCES ||--o| SOURCES : "duplicate_of"
+```
+
+---
+
+## 10. API 设计
+
+### 10.1 RESTful API 端点
+
+#### Sources API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/sources` | 获取所有数据源条目（分页） |
+| `GET` | `/api/sources/:id` | 获取单个条目详情 |
+| `GET` | `/api/sources/categories` | 获取所有分类 |
+| `POST` | `/api/sources/crawl` | 触发手动抓取 |
+
+#### Articles API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/articles` | 获取文章列表（分页 + 筛选） |
+| `GET` | `/api/articles/:id` | 获取文章详情 |
+| `GET` | `/api/articles/featured` | 获取精选文章 |
+| `GET` | `/api/articles/categories/:slug` | 按分类获取文章 |
+| `POST` | `/api/articles/generate` | 手动触发文章生成 |
+
+#### Pipeline API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/pipeline/run` | 触发完整管线执行 |
+| `GET` | `/api/pipeline/status/:id` | 查询管线运行状态 |
+| `GET` | `/api/pipeline/history` | 获取管线执行历史 |
+
+#### Comments API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/articles/:id/comments` | 获取文章评论列表（分页） |
+| `POST` | `/api/articles/:id/comments` | 发表评论（游客，无需登录） |
+| `DELETE` | `/api/comments/:id` | 隐藏评论（管理员） |
+
+#### Publishing API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/publish/:articleId/website` | 发布到网站 |
+| `POST` | `/api/publish/:articleId/social` | 发布到社交媒体 |
+
+### 10.2 请求 / 响应示例
+
+#### GET /api/articles
+
+```json
+// Request
+GET /api/articles?page=1&limit=10&category=science&status=published
+
+// Response 200
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "The Silent Hunters: From Cats to Combat Drones",
+      "theme": "Predator strategies in nature and modern warfare",
+      "category": "science",
+      "style": "narrative",
+      "wordCount": 1200,
+      "sourcesUsed": 3,
+      "status": "published",
+      "createdAt": "2026-03-08T10:30:00Z",
+      "publishedAt": "2026-03-08T11:00:00Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 42,
+    "totalPages": 5
+  }
+}
+```
+
+#### POST /api/pipeline/run
+
+```json
+// Request
+POST /api/pipeline/run
+{
+  "categories": ["science", "technology", "politics"],
+  "maxSources": 20,
+  "articleStyle": "humorous"
+}
+
+// Response 202
+{
+  "runId": "run_abc123",
+  "status": "running",
+  "message": "Pipeline started. Use GET /api/pipeline/status/run_abc123 to track progress."
+}
+```
+
+---
+
+## 11. 前端系统
+
+### 11.1 技术栈
+
+| 技术 | 用途 |
+|------|------|
+| **Next.js 14+** | App Router, SSR/SSG, SEO |
+| **React 18** | UI 组件 |
+| **TailwindCSS 3** | 样式框架 |
+| **Framer Motion** | 动画效果 |
+| **MDX** | 文章渲染 |
+
+### 11.2 页面结构
+
+```
+/                          → 首页（Featured + Latest + Trending）
+/article/:id               → 文章详情页
+/category/:slug             → 分类页面
+/search                    → 搜索页面
+/about                     → 关于页面（AI Journal 介绍）
+/admin                     → 管理后台（手动触发管线、审核文章）
+```
+
+### 11.3 首页设计
+
+```
+┌──────────────────────────────────────────────┐
+│  AI JOURNAL                    [Search] [Nav]│
+├──────────────────────────────────────────────┤
+│                                              │
+│  ┌─── FEATURED ARTICLE ───────────────────┐  │
+│  │                                        │  │
+│  │  "The Silent Hunters:                  │  │
+│  │   From Cats to Combat Drones"          │  │
+│  │                                        │  │
+│  │  Sources: Nature • BBC • TechCrunch    │  │
+│  │  Style: Narrative                      │  │
+│  │                                        │  │
+│  └────────────────────────────────────────┘  │
+│                                              │
+│  ── LATEST ARTICLES ─────────────────────    │
+│                                              │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐     │
+│  │ Article  │ │ Article  │ │ Article  │     │
+│  │ Card 1   │ │ Card 2   │ │ Card 3   │     │
+│  │          │ │          │ │          │     │
+│  │ Sci+Phil │ │ Tech+Art │ │ Eco+Bio  │     │
+│  └──────────┘ └──────────┘ └──────────┘     │
+│                                              │
+│  ── TRENDING TOPICS ─────────────────────    │
+│  [Science] [Technology] [Philosophy] [Politics]│
+│                                              │
+├──────────────────────────────────────────────┤
+│  © AI Journal — Where AI meets absurdity     │
+└──────────────────────────────────────────────┘
+```
+
+### 11.4 文章详情页设计
+
+显示以下信息：
+
+- **文章标题** + 主题标签
+- **来源引用** — 列出所有混合使用的原始新闻源（带链接）
+- **文章正文** — Markdown 渲染
+- **AI 管线透明度面板**（可折叠）：
+  - Stage 1 选题理由
+  - 使用的源标题
+  - 故事大纲
+  - Token 消耗统计
+- **相关文章推荐**
+- **分享按钮**（Twitter/X）
+- **游客评论区**：
+  - 评论列表（按时间倒序）
+  - 评论输入框 + 可选的昵称输入（placeholder: "游客"）
+  - 提交按钮（无需登录）
+
+---
+
+## 12. 发布系统
+
+### 12.1 网站发布
+
+文章生成后，通过 API 将文章状态从 `draft` 更新为 `published`。Next.js 通过 ISR（Incremental Static Regeneration）自动更新页面。
+
+```typescript
+// 发布流程
+async function publishToWebsite(articleId: string): Promise<void> {
+  // 1. 更新文章状态
+  await articleStore.updateStatus(articleId, 'published');
+  
+  // 2. 触发 Next.js 按需重新验证
+  await fetch(`${WEBSITE_URL}/api/revalidate`, {
+    method: 'POST',
+    body: JSON.stringify({ articleId }),
+  });
+}
+```
+
+### 12.2 社交媒体发布 (X/Twitter)
+
+#### 发布内容生成
+
+```typescript
+interface SocialPostContent {
+  text: string;       // 推文正文
+  url: string;        // 文章链接
+}
+
+function generateTweetContent(article: Article): SocialPostContent {
+  const sourceMix = article.sourceIds.length;
+  return {
+    text: `🧪 New from AI Journal\n\n"${article.title}"\n\nA ${article.style} blend of ${sourceMix} unrelated topics.\n\nRead more:`,
+    url: `${WEBSITE_URL}/article/${article.id}`,
+  };
+}
+```
+
+#### X API 集成
+
+```typescript
+async function postToTwitter(content: SocialPostContent): Promise<string> {
+  const response = await fetch('https://api.twitter.com/2/tweets', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${TWITTER_BEARER_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      text: `${content.text}\n${content.url}`,
+    }),
+  });
+
+  const data = await response.json();
+  if (data.errors) {
+    throw new Error(`Twitter API error: ${JSON.stringify(data.errors)}`);
+  }
+  return data.data.id;
+}
+```
+
+---
+
+## 13. 调度与自动化
+
+### 13.1 每日执行流程
+
+```mermaid
+graph TD
+    A["⏰ Cron Trigger\n(Daily 00:00 UTC)"] --> B["Step 1: Crawl All Sources"]
+    B --> B2["Step 2: Dedup Filter\n(URL + Title Similarity)"]
+    B2 --> C["Step 3: Store in Metadata Layer"]
+    C --> D["Step 4: Run AI Gatekeeper\n(Stage 1)"]
+    D --> E["Step 5: Content Reveal"]
+    E --> E2["Step 6: Run AI Curator\n(Stage 1.5)"]
+    E2 --> F["Step 7: Run Story Generator\n(Stage 2)"]
+    F --> G["Step 8: Store Article\n(status: draft)"]
+    G --> H{"Auto-publish?"}
+    H -->|Yes| I["Step 9a: Publish to Website"]
+    H -->|No| J["Step 9b: Queue for Review"]
+    I --> K["Step 10: Post to Social Media"]
+    K --> L["Step 11: Health Check\n(Source Monitor)"]
+    J --> L
+    L --> M["Done ✅"]
+
+    style A fill:#3b82f6,stroke:#2563eb,color:#fff
+    style B2 fill:#ec4899,stroke:#db2777,color:#fff
+    style D fill:#f59e0b,stroke:#d97706,color:#000
+    style E2 fill:#06b6d4,stroke:#0891b2,color:#fff
+    style F fill:#8b5cf6,stroke:#7c3aed,color:#fff
+    style L fill:#6366f1,stroke:#4f46e5,color:#fff
+    style M fill:#22c55e,stroke:#16a34a,color:#fff
+```
+
+### 13.2 调度配置
+
+```yaml
+# cron-schedule.yml
+schedules:
+  # 每小时抓取高频源
+  crawl-frequent:
+    cron: "0 * * * *"         # 每小时
+    sources: [bbc, techcrunch, hackernews]
+
+  # 每6小时抓取低频源
+  crawl-infrequent:
+    cron: "0 */6 * * *"       # 每6小时
+    sources: [arxiv, nature]
+
+  # 每天生成一篇文章
+  generate-article:
+    cron: "0 8 * * *"         # 每天 UTC 08:00 (确保有当天的新鲜素材)
+    maxSources: 30
+    articleStyle: random       # 随机选择风格
+
+  # 每天发布到社交媒体
+  social-post:
+    cron: "0 12 * * *"        # 每天 UTC 12:00 (阅读高峰时段)
+```
+
+### 13.3 实现方式
+
+| 方案 | MVP 推荐 | 生产推荐 |
+|------|----------|----------|
+| **Node-cron** | ✅ 简单直接 | — |
+| **Vercel Cron** | ✅ 零运维 | ✅ |
+| **GitHub Actions** | ✅ 免费 | — |
+| BullMQ + Redis | — | ✅ 高可靠 |
+
+---
+
+## 14. Token 控制与成本策略
+
+### 14.1 Token 预算模型
+
+```
+单次管线运行的 Token 消耗：
+
+Stage 1 (Gatekeeper):
+  输入: ~30 titles × ~15 tokens/title = ~450 tokens
+  Prompt: ~200 tokens
+  输出: ~300 tokens
+  ────────────────
+  小计: ~950 tokens
+
+Stage 1.5 (Curator):                    ← 新增
+  输入: ~3 sources × ~200 tokens = ~600 tokens
+  Prompt: ~150 tokens
+  输出: ~3 summaries × ~150 tokens = ~450 tokens
+  ────────────────
+  小计: ~1200 tokens
+
+Stage 2 (Generator):
+  输入: ~3 curated summaries × ~150 tokens = ~450 tokens
+  Outline: ~100 tokens
+  Prompt: ~300 tokens
+  输出: ~1500 tokens (800-1500 word article)
+  ────────────────
+  小计: ~2350 tokens
+
+总计: ~4500 tokens / 篇
+
+每日1篇: ~4500 tokens/day
+每月: ~135,000 tokens/month ≈ $0.20 (GPT-4o-mini pricing)
+```
+
+### 14.2 Token 控制参数
+
+```typescript
+const TOKEN_BUDGET = {
+  // Stage 1
+  stage1: {
+    maxInputTokens: 800,         // 标题列表的最大 token 数
+    maxOutputTokens: 500,         // 选题输出的最大 token 数
+    maxSourcesInCatalog: 50,      // 目录中最多展示的源数量
+  },
+
+  // Content Reveal
+  reveal: {
+    maxSourcesSelected: 5,        // 最多选取的源数量
+    maxTokensPerSource: 1000,     // 每个源的最大 token 数
+    preferAbstract: true,         // 优先使用 abstract
+  },
+
+  // Stage 1.5 (Curator)
+  curator: {
+    maxInputTokens: 2000,         // 所有源内容的最大 token 数
+    maxOutputTokens: 800,         // 摘要 + key_facts 的最大 token 数
+    maxSummaryWords: 200,         // 每个源的摘要最大字数
+  },
+
+  // Stage 2
+  stage2: {
+    maxInputTokens: 3000,         // 上下文最大 token 数
+    maxOutputTokens: 2000,        // 文章最大 token 数
+    targetWordCount: { min: 800, max: 1500 },
+  },
+} as const;
+```
+
+### 14.3 AI 模型选择
+
+| 模型 | 用途 | 成本 | 推荐 |
+|------|------|------|------|
+| **GPT-4o-mini** | Stage 1 + 1.5 + 2 | ~$0.20/day | ⭐ MVP |
+| GPT-4o | Stage 2 (高质量) | ~$1.5/day | 生产 |
+| Claude 3.5 Haiku | Stage 1 + 1.5 | ~$0.10/day | 备选 |
+| Llama 3 (CF Workers AI) | Stage 1 | 免费 | 低成本 |
+| Gemini 2.0 Flash | Stage 1 + 1.5 + 2 | 免费层 | ⭐ 零成本方案 |
+
+> [!TIP]
+> **推荐策略**：阶段 1 使用低成本模型（GPT-4o-mini 或 Gemini Flash），阶段 2 使用高质量模型（GPT-4o 或 Claude 3.5 Sonnet）。选题不需要高创造力，但创作需要。
+
+---
+
+## 15. 部署架构
+
+### 15.1 架构图
+
+```mermaid
+graph TB
+    subgraph "Frontend"
+        VERCEL["Vercel\n(Next.js SSR/SSG)"]
+    end
+
+    subgraph "Backend"
+        API["API Server\n(Node.js / Docker)"]
+        CRON["Cron Scheduler\n(Vercel Cron / GH Actions)"]
+    end
+
+    subgraph "Database"
+        SUPABASE["Supabase\n(PostgreSQL)"]
+    end
+
+    subgraph "External Services"
+        AI_API["AI API\n(OpenAI / Gemini)"]
+        TWITTER["X API\n(Twitter)"]
+        RSS["RSS Feeds\n(BBC, Nature...)"]
+    end
+
+    VERCEL <--> API
+    CRON --> API
+    API <--> SUPABASE
+    API --> AI_API
+    API --> TWITTER
+    API --> RSS
+
+    style VERCEL fill:#000,stroke:#333,color:#fff
+    style SUPABASE fill:#3ecf8e,stroke:#2da97e,color:#000
+    style AI_API fill:#10a37f,stroke:#0e8c6b,color:#fff
+```
+
+### 15.2 环境变量
+
+```bash
+# .env.example
+
+# Database
+DATABASE_URL=postgresql://user:pass@host:5432/ai_journal
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+
+# AI
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AI...
+AI_MODEL_STAGE1=gpt-4o-mini
+AI_MODEL_STAGE2=gpt-4o
+
+# Social Media
+TWITTER_API_KEY=...
+TWITTER_API_SECRET=...
+TWITTER_BEARER_TOKEN=...
+
+# Website
+NEXT_PUBLIC_SITE_URL=https://aijournal.ai
+REVALIDATE_SECRET=...
+
+# Pipeline
+MAX_SOURCES_PER_RUN=30
+ARTICLE_STYLE=random
+AUTO_PUBLISH=false
+```
+
+### 15.3 部署清单
+
+| 组件 | 平台 | 成本 (MVP) |
+|------|------|-----------|
+| 前端 | Vercel Free | $0 |
+| 后端 API | Vercel Serverless / Railway | $0-5/mo |
+| 数据库 | Supabase Free | $0 |
+| AI API | OpenAI / Gemini | $0-5/mo |
+| 调度 | Vercel Cron / GitHub Actions | $0 |
+| 域名 | 可选 | $10-15/yr |
+| **总计** | | **$0-10/mo** |
+
+---
+
+## 16. MVP 实施路线图
+
+### Phase 1: Foundation（第 1-2 周）
+
+```
+✅ 项目初始化 (monorepo setup, TypeScript config)
+✅ 数据库设计 + Supabase 初始化
+✅ 核心类型定义 (SourceItem, Article, AI types)
+✅ 常量 + 配置文件
+```
+
+**交付物**: 可运行的空项目骨架 + 数据库表
+
+### Phase 2: Data Pipeline（第 3-4 周）
+
+```
+✅ RSS 基类实现 (BaseRSSProvider)
+✅ 3 个 Source Provider (BBC, Nature, HackerNews)
+✅ SourceRegistry 工厂
+✅ 数据存储层 (source-store.ts)
+✅ 手动触发抓取 API
+```
+
+**交付物**: 可抓取多源数据并存入数据库
+
+### Phase 3: AI Pipeline（第 5-6 周）
+
+```
+✅ Stage 1: Content Gatekeeper (prompt + parser)
+✅ Content Revealer (data layer accessor)
+✅ Stage 2: Story Generator (prompt + parser)
+✅ Token 计数 + 截断工具
+✅ 管线编排 (pipeline orchestrator)
+```
+
+**交付物**: 可端到端生成文章
+
+### Phase 4: Frontend（第 7-8 周）
+
+```
+✅ Next.js 项目初始化
+✅ 首页 (Featured + Latest)
+✅ 文章详情页
+✅ 分类页
+✅ 搜索功能
+✅ 响应式设计
+```
+
+**交付物**: 可访问的网站 + 文章阅读体验
+
+### Phase 5: Publishing & Automation（第 9-10 周）
+
+```
+✅ 网站自动发布 (ISR revalidation)
+✅ X/Twitter 发布集成
+✅ Cron 调度配置
+✅ 管线运行日志
+✅ 错误处理 + 重试机制
+```
+
+**交付物**: 全自动化的 AI 期刊系统
+
+---
+
+## 17. 编码规范
+
+### 17.1 核心规则
+
+| 规则 | 约束 |
+|------|------|
+| 文件行数上限 | **200 行**（硬性） |
+| 单一职责 | 每个文件 / 模块只做一件事 |
+| 服务间禁止直接调用 | 数据流由编排层协调 |
+| 禁止 `any` | 除非对接无类型 API（须注释） |
+| 环境变量注入 | 通过构造函数注入，禁止全局变量 |
+| 错误处理 | 外部 API 必须检查错误码并抛出 |
+| 常量管理 | URL / Magic String 放入 `constants.ts` |
+
+### 17.2 Commit 规范
+
+```
+feat(crawler): add BBC RSS provider
+fix(gatekeeper): handle empty source list
+refactor(generator): extract prompt builder
+docs: update API documentation
+chore: upgrade dependencies
+```
+
+### 17.3 新功能开发检查清单
+
+- [ ] 所有涉及文件 ≤ 200 行
+- [ ] 新增函数/类只做一件事
+- [ ] 代码放在正确的目录层级
+- [ ] 无跨服务直接调用
+- [ ] 类型安全（无新增 `any`）
+- [ ] 所有外部调用有错误处理
+- [ ] 无硬编码魔法值
+- [ ] 环境变量通过注入传递
+- [ ] 有对应的 API 类型定义
+
+---
+
+## 18. 未来升级方向
+
+### 18.1 Expert Review System（专家审稿系统）
+
+```mermaid
+flowchart LR
+    GEN["AI Stage 2\n(Generator)"] --> REVIEW["AI Stage 3\n(Expert Reviewer)"]
+    REVIEW --> REVISE["AI Stage 4\n(Revision)"]
+    REVISE --> FINAL["Final Article"]
+
+    style REVIEW fill:#ef4444,stroke:#dc2626,color:#fff
+    style REVISE fill:#06b6d4,stroke:#0891b2,color:#fff
+```
+
+新增两个 AI 阶段：
+
+- **Stage 3: Expert Reviewer** — 以学术评审语气对文章提出"严肃"的修改建议
+- **Stage 4: Revision** — 根据审稿意见修改文章，增加更多学术味道
+
+### 18.2 Critic Board（评论家委员会）
+
+模拟多个不同"性格"的评论家 AI：
+
+| 评论家角色 | Prompt 风格 |
+|-----------|------------|
+| 保守学者 | "This lacks methodological rigor..." |
+| 激进评论家 | "A bold but necessary provocation..." |
+| 怀疑论者 | "How can we trust this correlation?" |
+| 哲学家 | "One must consider the ontological implications..." |
+
+评论家意见可以作为文章的附加内容，增加娱乐性。
+
+### 18.3 其他扩展方向
+
+| 方向 | 描述 | 优先级 |
+|------|------|--------|
+| **多语言支持** | 中文 / 日文版本的恶搞期刊 | 🟡 中 |
+| **用户投稿** | 用户提交"选题线索"，AI 创作 | 🟢 低 |
+| **播客生成** | TTS 将文章转为播客音频 | 🟢 低 |
+| **Newsletter** | 每周邮件订阅 | 🟡 中 |
+| **交互式文章** | 读者可以"选择" AI 混合的领域 | 🔴 高 |
+| **引用图谱** | 可视化文章如何混合不同领域的信息 | 🟡 中 |
+| **读者投票** | 票选最荒诞 / 最有洞察力的文章 | 🟢 低 |
+| **API 公开** | 允许第三方调用生成恶搞文章 | 🟢 低 |
+
+---
+
+> [!NOTE]
+> 本文档将随项目开发进展持续更新。所有架构变更须同步反映到此文档中。
+
+---
+
+*Generated by AI Journal System Design — v1.1 (含三项增强提案：配图复用 / Content Curator AI / 数据生命周期管理)*

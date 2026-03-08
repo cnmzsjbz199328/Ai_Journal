@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #121212;
+  --sidebar: #f8f9f8;
+  --accent: #002147;
+  --border: #e5e7eb;
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar: var(--sidebar);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --font-serif: var(--font-merriweather), serif;
+  --font-sans: var(--font-inter), sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Journal-style Typography */
+@layer base {
+  article {
+    @apply font-serif leading-relaxed text-lg max-w-prose mx-auto;
+  }
+  
+  h1, h2, h3, h4 {
+    @apply font-sans font-bold tracking-tight text-accent;
+  }
+}

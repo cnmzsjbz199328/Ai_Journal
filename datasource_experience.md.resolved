@@ -1,0 +1,360 @@
+# 数据源整理与归一经验文档
+
+> **来源项目**: `wechat-mp-automated-publisher`  
+> **目标项目**: AI Journal  
+> **日期**: 2026-03-08  
+> **目的**: 从现有项目的数据源处理实践中提取可复用的优秀经验和需要改进的部分
+
+---
+
+## 1. 架构总览：现有项目做对了什么
+
+### 1.1 统一接口 + 工厂模式 ✅
+
+```
+NewsProvider 接口（仅一个方法）
+     ↑ 实现
+     ├── BaseRssProvider（抽象基类）
+     │    ├── FinanceProvider     (12 行)  — 零代码覆写
+     │    ├── ScienceDailyProvider(14 行)  — 零代码覆写
+     │    ├── NasaProvider        (35 行)  — 仅覆写 parseItem
+     │    └── ArsProvider         (36 行)  — 仅覆写 parseItem
+     ├── MITProvider    (95 行) — 组合 RSS + AI 分解
+     ├── APAProvider    (109 行) — 组合 RSS + AI 分解
+     └── GrokNewsProvider (122 行) — 纯 API + AI 驱动
+```
+
+**核心优势**：
+- [NewsProvider](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/types.ts#6-9) 接口极简——只有 [fetchNews(): Promise<NewsItem[]>](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts#11-47)
+- **任何数据源，不论其内部实现多复杂，对外暴露的永远是同一个 `NewsItem[]`**
+- `NewsFactory.getProvider(domain)` 工厂一行代码切换数据源
+- 新增源只需实现接口 + 在工厂注册，**零侵入核心管线**
+
+**AI Journal 直接复用**：这套 `SourceProvider` + `SourceRegistry` + 工厂模式可以原样搬过来。
+
+---
+
+## 2. BaseRssProvider：最重要的抽象
+
+### 2.1 设计亮点 ✅
+
+[base-rss.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts) 是整个项目数据源层的基石，123 行代码解决了 RSS 类源的所有通用问题：
+
+| 功能 | 实现方式 |
+|------|---------|
+| **超时控制** | `AbortController` + `setTimeout(10_000)` |
+| **容错 User-Agent** | 模拟 Chrome 避免被 RSS 服务器拒绝 |
+| **正则解析** | 不依赖 XML parser 库，纯正则提取 `<item>` |
+| **CDATA 处理** | 支持 `<![CDATA[...]]>` 和纯文本两种模式 |
+| **HTML 实体解码** | 覆盖 20+ 种常见实体 (`&amp;`, `&#x2019;`, `&hellip;` 等) |
+| **多源描述选取** | `<description>` vs `<content:encoded>` 取更长的 |
+| **图片提取** | 四级 fallback：`media:content` → `media:thumbnail` → `enclosure` → `<img>` |
+| **数量限制** | 硬编码 `if (items.length >= 5) break;` |
+
+### 2.2 需要改进的部分 ⚠️
+
+#### A. 数量限制硬编码问题
+
+```typescript
+// 当前：hardcoded
+if (items.length >= 5) break;
+
+// MIT/APA 不得不覆写整个 fetchNews() 来改为 8
+// 改进：应该是一个可配置参数
+constructor(protected url: string, protected sourceName: string, protected maxItems = 5) { }
+```
+
+**影响**：MIT 和 APA 各复制了 ~30 行近乎相同的 [fetchNews()](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts#11-47) 代码，只为修改一个数字（5→8）。这是明显的复制粘贴问题。
+
+**AI Journal 教训**：`maxItems` 应该是基类构造函数参数或配置常量。
+
+#### B. HTML 实体解码不完整
+
+```typescript
+// 当前：手动维护的实体列表
+.replace(/&amp;/g, '&')
+.replace(/&lt;/g, '<')
+...
+// 缺少很多实体，如 &copy; &reg; &trade; 等
+```
+
+**AI Journal 改进**：如果平台支持，使用 [he](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/index.ts#152-195) 库或 Edge Runtime 的 `TextDecoder` 做完整解码。如果不行（如 Cloudflare Workers 限制），至少将实体列表提取到 [constants.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/config/constants.ts) 作为 `ENTITY_MAP`。
+
+#### C. 正则解析 vs XML Parser
+
+```typescript
+// 当前：纯正则
+const matches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
+```
+
+**优点**：零依赖，在 Cloudflare Workers 环境完美运行。  
+**缺点**：无法处理嵌套 `<item>` 或 namespace 前缀。  
+**AI Journal 评估**：如果目标环境是 Node.js (Vercel)，可以考虑 `fast-xml-parser`。如果仍在 Edge Runtime，正则方案已经验证可靠，直接复用。
+
+#### D. 错误信息不够具体
+
+```typescript
+// 当前
+throw new Error(`No news items fetched from ${this.sourceName} — source may have changed.`);
+
+// 缺少：HTTP 状态码、响应长度、XML 预览片段
+// 在生产环境排查问题时，这个错误信息几乎没有诊断价值
+```
+
+**AI Journal 改进**：
+```typescript
+if (items.length === 0) {
+  throw new Error(
+    `${this.sourceName}: 0 items parsed. ` +
+    `HTTP ${res.status}, body ${xml.length} chars. ` +
+    `Preview: ${xml.slice(0, 200)}`
+  );
+}
+```
+
+---
+
+## 3. Provider 分层模式：三种复杂度
+
+项目中的 7 个 Provider 自然形成了三个复杂度层级，这个分层对 AI Journal 很有参考价值：
+
+### 3.1 零覆写层 — "我和基类一模一样"
+
+```typescript
+// finance.ts (12 行) / sciencedaily.ts (14 行)
+export class FinanceProvider extends BaseRssProvider {
+    constructor() { super(RSS_SOURCES.FINANCE, 'MarketWatch'); }
+}
+```
+
+**经验**：如果 RSS Feed 结构标准，Provider 只需指定 URL 和名称。这证明基类设计得好。AI Journal 中 BBC、TechCrunch 等标准 RSS 源应该也是这种模式。
+
+### 3.2 轻量覆写层 — "我只修一个方法"
+
+```typescript
+// nasa.ts — 覆写 parseItem，解决 content:encoded 噪音问题
+// ars.ts — 覆写 parseItem，清理 RSS footer 垃圾文本
+```
+
+**经验**：每个 RSS 源都有自己的"脏"数据特征（NASA 的整页 HTML、Ars 的 `]]>` 残留）。必须为每个源预留**清洗钩子**。
+
+**AI Journal 教训**：在 [BaseRssProvider](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts#8-123) 中增加 `protected cleanDescription(desc: string): string` 钩子方法，默认返回原文，各子类按需覆写。比当前覆写整个 [parseItem](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts#48-122) 更优雅。
+
+### 3.3 信息层 Provider — "我不是简单的 RSS，我内部还调用了 AI"
+
+```typescript
+// mit.ts / apa.ts — RSS 抓取 → 日期选择 → AI 分解 → 映射为标准 NewsItem[]
+// grok.ts — 直接用 AI (Grok) 的 web_search 能力获取结构化数据
+```
+
+**核心模式**：
+
+```
+原始源 → 内部预处理 → 对外仍然是 NewsItem[]
+```
+
+调用方完全不知道 MIT 的 5 条数据来自同一篇文章的 AI 拆分，也不知道 Immigration 的 5 条数据来自 Grok 的实时搜索。**这种信息隐藏是最有价值的设计思想。**
+
+**AI Journal 关联**：这与 AI Journal 的 "Content Curator" (Stage 1.5) 理念一致。区别在于：
+- 现有项目：AI 处理在**数据源层**完成（Provider 内部）
+- AI Journal：AI 处理在**管线层**完成（Curator 独立 Agent）
+
+两种方案各有优势。AI Journal 可以两者并存——某些源在 Provider 内做预处理（如文章拆分），管线层再做统一整理。
+
+---
+
+## 4. NewsItem 归一化模型
+
+### 4.1 当前模型
+
+```typescript
+interface NewsItem {
+  title: string;           // 必需
+  pubDate: string;         // 必需
+  link?: string;           // 可选
+  source?: string;         // 可选
+  imageUrl?: string;       // 可选
+  description?: string;    // 可选
+  aiAbstract?: string;     // AI 生成的摘要
+  aiTranslation?: { title: string; content: string }; // AI 翻译
+}
+```
+
+### 4.2 优秀之处 ✅
+
+1. **最小化必需字段**：只有 `title` 和 `pubDate` 是必需的，其余全部可选。这允许不同质量的数据源和平共存。
+2. **AI 输出字段分离**：`aiAbstract` 和 `aiTranslation` 是后处理添加的，不在 Provider 内产生。这保持了数据源层和 AI 层的职责分离。
+3. **`source` 字段**：追踪数据来源，对 AI Journal 的多源引用至关重要。
+
+### 4.3 需要改进的部分 ⚠️
+
+1. **`pubDate` 是原始字符串**：不同源返回的日期格式不同（RFC 2822、ISO 8601、自定义格式）。应该在 Provider 内部就归一化为 ISO 8601。
+2. **没有 [id](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/nvidia.ts#87-93) 字段**：当前项目是无状态的（抓取完就发布），所以不需要 ID。但 AI Journal 有数据库，每条 `SourceItem` 必须有唯一 ID。
+3. **`description` 含义模糊**：有时是摘要（ScienceDaily），有时是 AI 拆解后的全文（MIT），有时是 AI 搜索结果（Grok）。AI Journal 应该明确区分 `abstract` 和 `content`。
+
+### 4.4 AI Journal SourceItem 的归一化策略建议
+
+```
+所有 Provider 输出的数据，必须满足以下归一化要求：
+  1. title — 非空，纯文本，无 HTML 标签
+  2. url — 非空，用于去重
+  3. source — 非空，来源名称
+  4. category — 非空，领域分类
+  5. timestamp — ISO 8601 格式
+  6. abstract — 清洗后的纯文本摘要（≤500 字）
+  7. content — 可选，完整正文
+  8. imageUrl — 可选，主图 URL
+```
+
+---
+
+## 5. pickByDate：日期种子选择策略
+
+[utils.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/utils.ts) 中的 [pickByDate](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/utils.ts#1-13) 是一个极简但有效的确定性选择工具：
+
+```typescript
+export function pickByDate<T>(items: T[]): T {
+    const dayOfYear = Math.floor((now - startOfYear) / 86_400_000);
+    return items[dayOfYear % items.length];
+}
+```
+
+**优点**：
+- **幂等性**：同一天多次调用返回相同结果（Cron 重试安全）
+- **自动轮换**：每天自然切换到下一个
+
+**AI Journal 借鉴**：此函数可直接复用于 AI Journal 的日期种子轮换场景。但 AI Journal 有更复杂的轮换需求（衰减权重 + 冷却期），此函数适合作为 MVP 阶段的补充工具。
+
+---
+
+## 6. AI 内容分解模式（NvidiaService）
+
+### 6.1 核心设计 ✅
+
+[nvidia.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/nvidia.ts) 展示了一个非常健壮的 AI API 调用模式：
+
+```
+调用 AI → 解析 JSON → 验证结构 → 归一化
+   ↓ 失败
+   重试（最多 2 次）
+   ↓ 全部失败
+   文本 fallback（机械分割，永不抛出异常）
+```
+
+**关键技巧**：
+
+1. **双重 JSON 提取**：先 `JSON.parse()` 整体，失败后扫描最大 `{}` 块再解析
+2. **严格验证**：5 个 part、每个 title 非空、body > 50 字符
+3. **永不崩溃的 fallback**：即使 AI 完全失败，也返回机械分割的 5 段文本
+
+### 6.2 AI Journal 的 Curator 可以借鉴
+
+AI Journal 的 Content Curator (Stage 1.5) 应该有相同的防御性编程：
+
+```
+Curator AI 调用 → 解析 JSON → 验证 curated_summary 非空且 > 50 字
+   ↓ 失败
+   重试 1 次
+   ↓ 仍失败
+   fallback → 直接用原始 abstract 作为 curated_summary（降级但不中断）
+```
+
+### 6.3 需要改进的部分 ⚠️
+
+1. **Prompt 过长**：Nemotron 的 user prompt 是一整段拼接的字符串，包含规则、格式、示例。应拆分为模板。
+2. **`mode` 参数硬编码**：`science` / `philosophy` 是 TypeScript 联合类型。如果加新模式需要改 3 处（类型 + 2 个 Map）。应该改用配置对象。
+
+---
+
+## 7. 常量集中管理
+
+### 7.1 优秀实践 ✅
+
+[constants.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/config/constants.ts) 的 `RSS_SOURCES` 集中定义所有 RSS URL：
+
+```typescript
+export const RSS_SOURCES: Record<string, string> = {
+  FINANCE: 'http://feeds.marketwatch.com/marketwatch/topstories',
+  NASA: 'https://www.nasa.gov/rss/dyn/breaking_news.rss',
+  ...
+};
+```
+
+**优势**：修改 URL 只需改一个文件，不触碰业务代码。
+
+### 7.2 AI Journal 改进
+
+现有项目只存了 URL。AI Journal 需要更多元数据：
+
+```typescript
+// AI Journal 的 SOURCE_CONFIGS
+export const SOURCE_CONFIGS = {
+  BBC: {
+    url: 'https://feeds.bbci.co.uk/news/rss.xml',
+    name: 'BBC News',
+    category: 'general',
+    crawlFrequency: '1h',
+    maxItems: 10,
+  },
+  // ...
+} as const;
+```
+
+---
+
+## 8. 经验总结清单
+
+### ✅ 直接复用的优秀模式
+
+| # | 模式 | 来源文件 | AI Journal 用法 |
+|---|------|---------|----------------|
+| 1 | 统一接口 + 工厂模式 | [types.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/types.ts), [index.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/index.ts) | `SourceProvider` + `SourceRegistry` |
+| 2 | RSS 基类抽象 | [base-rss.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts) | [BaseRssProvider](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/base-rss.ts#8-123) 直接复用 |
+| 3 | 零覆写 Provider | [finance.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/finance.ts) | BBC、TechCrunch 等标准源 |
+| 4 | AI 内容分解 + fallback | [nvidia.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/nvidia.ts) | Curator AI 的防御性编程 |
+| 5 | 日期种子选择 | [utils.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/utils.ts) | [pickByDate](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/utils.ts#1-13) 作为辅助工具 |
+| 6 | 常量集中管理 | [constants.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/config/constants.ts) | `SOURCE_CONFIGS` 升级版 |
+| 7 | 信息层 Provider | [mit.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/mit.ts), [apa.ts](file:///c:/Users/tj169/OneDrive%20-%20Flinders/work/weixintest/wechat-mp-automated-publisher/src/services/news/apa.ts) | Provider 内部 AI 预处理 |
+| 8 | 多层图片提取 | `base-rss.ts:102-109` | 四级 fallback 提取策略 |
+
+### ⚠️ 需要改进的部分
+
+| # | 问题 | 影响 | 改进方案 |
+|---|------|------|---------|
+| 1 | `maxItems` 硬编码 | MIT/APA 重复 30 行代码 | 构造函数参数化 |
+| 2 | 日期格式不统一 | 下游解析困难 | Provider 内统一转 ISO 8601 |
+| 3 | 错误信息缺诊断数据 | 生产排查困难 | 加 HTTP 状态码 + XML 预览 |
+| 4 | HTML 实体列表不完整 | 偶尔出现未解码字符 | 提取为配置或用库 |
+| 5 | 无 ID 字段 | 无法持久化 / 去重 | SourceItem 增加 UUID |
+| 6 | description 含义模糊 | 摘要和全文混用 | 明确 abstract vs content |
+| 7 | Prompt 混在代码逻辑中 | 修改 prompt 需要改业务代码 | 抽取为模板文件或常量 |
+| 8 | 无请求限流/退避 | 并发抓取可能被封 IP | 加 rate limiter + 指数退避 |
+
+---
+
+## 9. AI Journal 数据源层建议架构
+
+综合以上经验，AI Journal 的数据源层建议如下：
+
+```
+SourceProvider 接口
+    ↑ 实现
+    ├── BaseRssProvider (改进版)
+    │   ├── maxItems 可配置
+    │   ├── cleanDescription() 钩子方法
+    │   ├── 日期格式统一转换
+    │   └── 错误信息增强
+    │        ├── BBCProvider     (零覆写)
+    │        ├── NatureProvider  (零覆写)
+    │        ├── HackerNewsProvider (可能需要覆写，API 源)
+    │        └── ...
+    ├── BaseApiProvider (新增，AI 类源基类)
+    │   ├── 内置重试 + fallback
+    │   └── JSON 提取 + 验证
+    └── SourceRegistry (工厂 + 注册表)
+         └── 按 category 查询、按 health 过滤
+```
+
+---
+
+*本文档基于 `wechat-mp-automated-publisher` 项目 2026-03-08 的代码快照整理。*
