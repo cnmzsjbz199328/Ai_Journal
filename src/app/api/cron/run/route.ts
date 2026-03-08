@@ -9,7 +9,7 @@ import { revalidatePath } from 'next/cache';
 import { runCrawl } from '@/services/crawler/crawl-runner';
 import { getActiveSources } from '@/services/storage/source-store';
 import { runPipeline } from '@/services/ai/pipeline';
-import { insertArticle } from '@/services/storage/article-store';
+import { insertArticle, updateArticleStatus } from '@/services/storage/article-store';
 import { postArticleTeaser } from '@/services/publishing/twitter';
 import type { SourceItem, UsageRole } from '@/types';
 
@@ -65,6 +65,10 @@ export async function GET(req: NextRequest) {
         // 5. Store the generated article
         const articleId = await insertArticle(result);
         console.log(`[Cron] Generated Article ID: ${articleId}`);
+
+        if (process.env.AUTO_PUBLISH !== 'false') {
+            await updateArticleStatus(articleId, 'published');
+        }
 
         // 6. Automated Publishing & Cache Purge
         revalidatePath('/');
