@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getArticles } from "@/services/storage/article-store";
+import { getSourcesByIds } from "@/services/storage/source-store";
 import { ArrowRight, Calendar, Clock, BookOpen } from "lucide-react";
 
 /**
@@ -18,6 +19,20 @@ export default async function HomePage() {
 
   const featured = publishedArticles[0];
   const others = publishedArticles.slice(1);
+
+  let featuredImage: string | undefined;
+  if (featured && featured.sourceIds) {
+    if (featured.coverImage) {
+      featuredImage = featured.coverImage || undefined;
+    } else {
+      try {
+        const sources = await getSourcesByIds(featured.sourceIds);
+        featuredImage = sources.find((s: any) => s.imageUrl)?.imageUrl || undefined;
+      } catch (e) {
+        console.warn("Failed to fetch featured image sources", e);
+      }
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -54,6 +69,14 @@ export default async function HomePage() {
             </Link>
           </div>
           <div className="hidden lg:block bg-accent aspect-[3/4] rounded-sm group relative overflow-hidden">
+            {featuredImage && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={featuredImage}
+                alt="Featured Article Visual"
+                className="absolute inset-0 w-full h-full object-cover opacity-70 group-hover:opacity-90 transition-opacity duration-500 mix-blend-overlay"
+              />
+            )}
             {/* Abstract Panel overlay */}
             <div className="absolute inset-x-0 bottom-0 p-8 bg-black/60 backdrop-blur-md border-t border-white/20 text-white space-y-4">
               <span className="text-xs font-black uppercase tracking-widest text-blue-300">Abstract Preview</span>

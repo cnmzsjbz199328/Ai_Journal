@@ -61,6 +61,8 @@ export async function getArticles(params: ArticleListParams = {}) {
             category: articles.category,
             wordCount: articles.wordCount,
             status: articles.status,
+            coverImage: articles.coverImage,
+            sourceIds: articles.sourceIds,
             createdAt: articles.createdAt,
             publishedAt: articles.publishedAt,
         })
