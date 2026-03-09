@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Inter, Merriweather } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
-import { BookOpen, Search, Menu } from "lucide-react";
+import { BookOpen, Menu } from "lucide-react";
+import SearchBar from "@/components/ui/SearchBar";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -40,16 +41,28 @@ export default function RootLayout({
             </Link>
 
             <nav className="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-600 uppercase tracking-widest">
-              <Link href="/" className="hover:underline hover:text-accent">Current Issue</Link>
+              <div className="relative group py-6">
+                <Link href="/" className="hover:underline hover:text-accent">Current Issue</Link>
+                {/* Category Dropdown */}
+                <div className="absolute top-full left-0 w-48 bg-white border border-slate-200 shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 rounded-sm">
+                  <div className="flex flex-col py-2 border-t-2 border-accent text-xs">
+                    <Link href="/search?q=Technology" className="px-4 py-3 hover:bg-slate-50 hover:text-accent border-b border-slate-100">Technology</Link>
+                    <Link href="/search?q=Science" className="px-4 py-3 hover:bg-slate-50 hover:text-accent border-b border-slate-100">Science</Link>
+                    <Link href="/search?q=Politics" className="px-4 py-3 hover:bg-slate-50 hover:text-accent border-b border-slate-100">Politics</Link>
+                    <Link href="/search?q=Society" className="px-4 py-3 hover:bg-slate-50 hover:text-accent border-b border-slate-100">Society</Link>
+                    <Link href="/search?q=Economics" className="px-4 py-3 hover:bg-slate-50 hover:text-accent">Economics</Link>
+                  </div>
+                </div>
+              </div>
               <Link href="/archive" className="hover:underline hover:text-accent">Archive</Link>
               <Link href="/about" className="hover:underline hover:text-accent">About</Link>
               <Link href="/admin" className="hover:underline hover:text-accent">Admin</Link>
             </nav>
 
             <div className="flex items-center space-x-4">
-              <button className="p-2 text-slate-400 hover:text-accent">
-                <Search className="w-5 h-5" />
-              </button>
+              <div className="hidden md:block">
+                <SearchBar />
+              </div>
               <button className="md:hidden p-2 text-slate-400">
                 <Menu className="w-6 h-6" />
               </button>

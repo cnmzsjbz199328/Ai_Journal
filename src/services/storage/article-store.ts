@@ -4,7 +4,7 @@
 
 import { db } from '@/lib/db';
 import { articles } from '@/lib/schema';
-import { eq, and, desc, count, type SQL } from 'drizzle-orm';
+import { eq, and, desc, count, ilike, or, type SQL } from 'drizzle-orm';
 import { AI_CONFIG } from '@/config/constants';
 import type { PipelineResult } from '@/services/ai/pipeline';
 
@@ -13,6 +13,7 @@ export interface ArticleListParams {
     category?: string;
     limit?: number;
     offset?: number;
+    search?: string;
 }
 
 /** Save a generated article from pipeline result */
@@ -37,11 +38,18 @@ export async function insertArticle(result: PipelineResult): Promise<string> {
 
 /** Paginated article list with optional filters */
 export async function getArticles(params: ArticleListParams = {}) {
-    const { status, category, limit = 10, offset = 0 } = params;
-
+    const { status, category, limit = 10, offset = 0, search } = params;
     const conditions: SQL[] = [];
     if (status) conditions.push(eq(articles.status, status));
     if (category) conditions.push(eq(articles.category, category));
+    if (search) {
+        conditions.push(
+            or(
+                ilike(articles.title, `%${search}%`),
+                ilike(articles.theme, `%${search}%`)
+            ) as SQL
+        );
+    }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 

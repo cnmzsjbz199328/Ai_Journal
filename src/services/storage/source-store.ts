@@ -96,3 +96,19 @@ export async function getActiveSources() {
             ),
         );
 }
+
+/** Get specific sources by their IDs */
+export async function getSourcesByIds(ids: string[]) {
+    if (!ids || ids.length === 0) return [];
+
+    return db
+        .select({
+            id: sources.id,
+            title: sources.title,
+            sourceName: sources.sourceName,
+            url: sources.url,
+            imageUrl: sources.imageUrl,
+        })
+        .from(sources)
+        .where(inArray(sources.id, ids));
+}

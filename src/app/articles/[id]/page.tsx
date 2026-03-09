@@ -1,4 +1,5 @@
 import { getArticleById } from "@/services/storage/article-store";
+import { getSourcesByIds } from "@/services/storage/source-store";
 import { notFound } from "next/navigation";
 import MarkdownRenderer from "@/components/ui/MarkdownRenderer";
 import CommentSection from "@/components/comments/CommentSection";
@@ -17,6 +18,10 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
     const article = await getArticleById(id);
 
     if (!article) notFound();
+
+    // Fetch rich source metadata for the sidebar and cover image
+    const sources = await getSourcesByIds(article.sourceIds);
+    const coverImage = article.coverImage || sources.find(s => s.imageUrl)?.imageUrl;
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -41,6 +46,16 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
                             <p className="text-xl text-slate-600 font-serif italic border-l-4 border-accent pl-6 py-2 leading-relaxed">
                                 {article.theme}
                             </p>
+                        )}
+                        {coverImage && (
+                            <div className="mt-8 aspect-video w-full overflow-hidden rounded-sm border border-slate-200 bg-slate-100">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={coverImage}
+                                    alt={article.title}
+                                    className="w-full h-full object-cover"
+                                />
+                            </div>
                         )}
                     </header>
 
@@ -79,11 +94,19 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
                                     <h4 className="flex items-center text-xs font-black uppercase text-slate-400 tracking-widest">
                                         <ExternalLink className="w-4 h-4 mr-2" /> Data Sources ({article.sourceIds.length})
                                     </h4>
-                                    <ul className="space-y-3">
-                                        {article.sourceIds.map((sid, idx) => (
-                                            <li key={idx} className="flex items-start space-x-2 text-xs font-sans font-bold text-accent hover:underline">
-                                                <span className="text-slate-300">[{idx + 1}]</span>
-                                                <a href={`/api/sources/${sid}`} className="break-all">{sid.slice(0, 16)}...</a>
+                                    {/* Display actual source links instead of raw UUIDs */}
+                                    <ul className="space-y-4">
+                                        {sources.map((source, idx) => (
+                                            <li key={source.id} className="flex flex-col space-y-1">
+                                                <div className="flex items-start text-xs font-sans font-bold text-accent">
+                                                    <span className="text-slate-300 mr-2">[{idx + 1}]</span>
+                                                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="hover:underline line-clamp-2">
+                                                        {source.title}
+                                                    </a>
+                                                </div>
+                                                <span className="text-[10px] text-slate-400 uppercase tracking-widest pl-6">
+                                                    {source.sourceName}
+                                                </span>
                                             </li>
                                         ))}
                                     </ul>
