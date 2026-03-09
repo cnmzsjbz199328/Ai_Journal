@@ -25,6 +25,7 @@ export async function insertArticle(result: PipelineResult): Promise<string> {
             abstract: result.article.abstract,
             content: result.article.content,
             theme: result.theme,
+            category: result.article.category,
             outline: result.outline,
             sourceIds: result.selectedIds,
             wordCount: result.article.wordCount,

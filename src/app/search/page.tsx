@@ -7,17 +7,19 @@ export const metadata = {
 };
 
 interface SearchPageProps {
-    searchParams: Promise<{ q?: string }>;
+    searchParams: Promise<{ q?: string; category?: string }>;
 }
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
     const params = await searchParams;
     const query = params.q || "";
 
+    const category = params.category || "";
+
     let articles: any[] = [];
-    if (query) {
+    if (query || category) {
         try {
-            const res = await getArticles({ status: "published", search: query, limit: 50 });
+            const res = await getArticles({ status: "published", search: query, category, limit: 50 });
             articles = res.rows;
         } catch (error) {
             console.warn("Could not fetch search results:", error);
@@ -29,14 +31,16 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
             <header className="mb-16 border-b-2 border-accent pb-6">
                 <h1 className="text-3xl font-sans font-black tracking-tight text-accent uppercase flex items-center gap-4">
                     <Search className="w-8 h-8" />
-                    Search Results
+                    {category ? `${category} Articles` : "Search Results"}
                 </h1>
                 <p className="mt-4 text-xl text-slate-500 font-serif italic">
-                    {query ? `Showing results for "${query}"` : "Enter a search term to find articles."}
+                    {category
+                        ? `Viewing the latest papers published in ${category}`
+                        : (query ? `Showing results for "${query}"` : "Enter a search term to find articles.")}
                 </p>
             </header>
 
-            {!query ? null : articles.length === 0 ? (
+            {!(query || category) ? null : articles.length === 0 ? (
                 <div className="text-center py-20 bg-slate-50 border border-dashed border-border rounded">
                     <p className="text-slate-400 font-serif italic">No matching academic papers found.</p>
                 </div>

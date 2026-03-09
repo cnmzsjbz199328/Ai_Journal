@@ -59,6 +59,7 @@ export interface GeneratorOutput {
     title: string;
     abstract: string;
     content: string; // Markdown
+    category: 'Technology' | 'Science' | 'Politics' | 'Society' | 'Economics';
     wordCount: number;
 }
 
