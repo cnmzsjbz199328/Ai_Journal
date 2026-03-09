@@ -53,22 +53,56 @@ function buildFallback(sources: RevealedContent[]): CuratorOutput {
 
 export async function curateSources(
     sources: RevealedContent[],
-): Promise<CuratorOutput> {
+): Promise<CuratorOutput & { isNewlyCuratedIds: Set<string> }> {
     if (sources.length === 0) throw new Error('Curator: no sources to curate');
 
+    // Filter out sources that already have a curated summary to bypass AI costs
+    const cachedSources: CuratedSource[] = [];
+    const pendingSources: RevealedContent[] = [];
+
+    for (const src of sources) {
+        if (src.curatedSummary) {
+            cachedSources.push({
+                id: src.id,
+                curatedSummary: src.curatedSummary,
+                keyFacts: src.keyFacts || [],
+                contentQuality: 'good',
+                wordCount: src.wordCount || src.content?.split(/\\s+/).length || 0,
+            });
+        } else {
+            pendingSources.push(src);
+        }
+    }
+
+    // If everything is cached, return early
+    if (pendingSources.length === 0) {
+        return { sources: cachedSources, isNewlyCuratedIds: new Set() };
+    }
+
     try {
-        const raw = await callAI(buildPrompt(sources), { systemPrompt: SYSTEM_PROMPT });
+        const raw = await callAI(buildPrompt(pendingSources), { systemPrompt: SYSTEM_PROMPT });
         const parsed = parseAIResponse<CuratorOutput>(raw, ['sources']);
 
         // Validate each source has required fields
+        const newlyCuratedIds = new Set<string>();
         for (const src of parsed.sources) {
             if (!src.curatedSummary || src.curatedSummary.length < 20) {
                 throw new Error(`Curator: insufficient summary for source ${src.id}`);
             }
+            newlyCuratedIds.add(src.id);
         }
-        return parsed;
+
+        // Merge the AI processed results with our cached results
+        return {
+            sources: [...cachedSources, ...parsed.sources],
+            isNewlyCuratedIds: newlyCuratedIds
+        };
     } catch (err) {
         console.error('Curator failed, using fallback:', err);
-        return buildFallback(sources);
+        const fallback = buildFallback(pendingSources);
+        return {
+            sources: [...cachedSources, ...fallback.sources],
+            isNewlyCuratedIds: new Set(fallback.sources.map(s => s.id))
+        };
     }
 }

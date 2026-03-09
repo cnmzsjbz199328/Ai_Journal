@@ -39,6 +39,9 @@ export function revealContent(
             title: source.title,
             content,
             imageUrl: source.imageUrl,
+            curatedSummary: source.curatedSummary,
+            keyFacts: source.keyFacts as string[] | undefined,
+            wordCount: source.wordCount,
         };
     });
 }

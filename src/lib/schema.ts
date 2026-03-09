@@ -41,6 +41,7 @@ export const sources = pgTable(
 
         // Curator AI
         curatedSummary: text('curated_summary'),
+        keyFacts: jsonb('key_facts').$type<string[]>(),
 
         // Reuse management
         usageCount: integer('usage_count').default(0),

@@ -25,6 +25,7 @@ export interface SourceItem {
 
   // Curator AI fields
   curatedSummary: string | null;
+  keyFacts?: string[] | null;
 
   // Reuse management
   usageCount: number;
@@ -33,6 +34,7 @@ export interface SourceItem {
   cooldownUntil: string | null;
   usageRoles: UsageRole[];
   status: SourceStatus;
+  wordCount?: number | null;
 
   // Dedup fields
   titleHash: string | null;
@@ -56,6 +58,10 @@ export interface RevealedContent {
   title: string;
   content: string;
   imageUrl: string | null;
+  // Optional cache bypass fields
+  curatedSummary?: string | null;
+  keyFacts?: string[] | null;
+  wordCount?: number | null;
 }
 
 /** Provider health tracking */

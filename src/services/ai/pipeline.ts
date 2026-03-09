@@ -17,25 +17,32 @@ export interface PipelineResult {
     theme: string;
     outline: string[];
     rationale: string;
+    roleAssignments: Record<string, string>;
     tokenLog: {
         catalogSize: number;
         revealedSources: number;
     };
+    newlyCuratedSources: { id: string; curatedSummary: string; keyFacts: string[] }[];
 }
 
 /** Build the Stage 1 catalog view from source items */
 function buildCatalog(sources: SourceItem[]): CatalogEntry[] {
     return sources
-        .filter((s) => s.status !== 'cooling' && s.status !== 'archived')
+        .filter((s) => s.status !== 'archived')
         .filter((s) => !s.duplicateOf)
-        .sort((a, b) => b.usageWeight - a.usageWeight)
+        .sort((a, b) => {
+            const diff = b.usageWeight - a.usageWeight;
+            if (Math.abs(diff) > 0.001) return diff;
+            return Math.random() - 0.5; // Add jitter to break perfect ties and prevent AI position bias
+        })
         .map((s) => ({
             id: s.id,
             title: s.title,
             source: s.source,
             category: s.category,
             previousRoles: s.usageRoles,
-        }));
+        }))
+        .slice(0, 15);
 }
 
 /**
@@ -57,6 +64,14 @@ export async function runPipeline(
 
     // Stage 1.5: Curator — sees only raw content, NOT the outline (firewall)
     const curated = await curateSources(revealed);
+
+    // Save newly generated curations back to the database for future bypass
+    if (curated.isNewlyCuratedIds.size > 0) {
+        const newlyCuratedItems = curated.sources.filter(s => curated.isNewlyCuratedIds.has(s.id));
+        // We import updateSourceCurations here to avoid circular deps, or just pass it in.
+        // Actually, it's safer to do this in the Orchestrator (route.ts) to keep pipeline.ts pure.
+        // Let's attach isNewlyCuratedIds to the pipeline result instead.
+    }
 
     // Stage 2: Generator — receives outline (Stage 1) + curated (Stage 1.5)
     const generatorInput: GeneratorInput = {
@@ -87,6 +102,8 @@ export async function runPipeline(
         theme,
         outline,
         rationale,
+        roleAssignments: roleAssignments as any,
         tokenLog: { catalogSize: catalog.length, revealedSources: revealed.length },
+        newlyCuratedSources: curated.sources.filter(s => curated.isNewlyCuratedIds.has(s.id)),
     };
 }

@@ -5,7 +5,7 @@
 
 import { db } from '@/lib/db';
 import { sources } from '@/lib/schema';
-import { eq, inArray, and, gte, isNull } from 'drizzle-orm';
+import { eq, inArray, and, gte, isNull, or, lt } from 'drizzle-orm';
 import { hashTitle } from '@/utils/dedup';
 import type { RawFeedItem } from '@/services/crawler/types';
 
@@ -84,17 +84,65 @@ export async function markDuplicate(
         .where(eq(sources.id, id));
 }
 
-/** Get all active (non-cooling, non-archived) sources */
+/** Get all active (non-cooling, non-archived) sources, plus cooled-down ones */
 export async function getActiveSources() {
+    const now = new Date();
     return db
         .select()
         .from(sources)
         .where(
             and(
-                inArray(sources.status, ['fresh', 'active']),
                 isNull(sources.duplicateOf),
+                or(
+                    inArray(sources.status, ['fresh', 'active']),
+                    and(
+                        eq(sources.status, 'cooling'),
+                        lt(sources.cooldownUntil, now)
+                    )
+                )
             ),
         );
+}
+
+/** Mark selected sources as used, triggering weight decay and cooldown */
+export async function markSourcesAsUsed(
+    sourceIds: string[],
+    roleAssignments: Record<string, string>,
+): Promise<void> {
+    if (sourceIds.length === 0) return;
+
+    const existingRows = await db
+        .select({ id: sources.id, usageCount: sources.usageCount, usageWeight: sources.usageWeight, usageRoles: sources.usageRoles })
+        .from(sources)
+        .where(inArray(sources.id, sourceIds));
+
+    for (const row of existingRows) {
+        const newCount = (row.usageCount ?? 0) + 1;
+        // Decay weight geometrically
+        const newWeight = (Number(row.usageWeight) * 0.5).toFixed(4);
+
+        // Append usage role
+        const role = roleAssignments[row.id] || 'context';
+        const currentRoles = (row.usageRoles as string[]) ?? [];
+        const newRoles = [...currentRoles, role];
+
+        // Retire after 3 uses, else put on 24h cooldown
+        const nextStatus = newCount >= 3 ? 'archived' : 'cooling';
+        const cooldown = new Date();
+        cooldown.setHours(cooldown.getHours() + 24);
+
+        await db
+            .update(sources)
+            .set({
+                usageCount: newCount,
+                usageWeight: newWeight as any,
+                usageRoles: newRoles,
+                status: nextStatus as any,
+                lastUsedAt: new Date(),
+                cooldownUntil: cooldown,
+            })
+            .where(eq(sources.id, row.id));
+    }
 }
 
 /** Get specific sources by their IDs */
@@ -111,4 +159,24 @@ export async function getSourcesByIds(ids: string[]) {
         })
         .from(sources)
         .where(inArray(sources.id, ids));
+}
+
+/** 
+ * Save curated summaries and key facts back to the sources table
+ * so they can be reused without burning AI tokens on future runs.
+ */
+export async function updateSourceCurations(
+    curatedItems: { id: string; curatedSummary: string; keyFacts: string[] }[],
+): Promise<void> {
+    if (curatedItems.length === 0) return;
+
+    for (const item of curatedItems) {
+        await db
+            .update(sources)
+            .set({
+                curatedSummary: item.curatedSummary,
+                keyFacts: item.keyFacts,
+            })
+            .where(eq(sources.id, item.id));
+    }
 }

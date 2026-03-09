@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { runCrawl } from '@/services/crawler/crawl-runner';
-import { getActiveSources } from '@/services/storage/source-store';
+import { getActiveSources, markSourcesAsUsed, updateSourceCurations } from '@/services/storage/source-store';
 import { runPipeline } from '@/services/ai/pipeline';
 import { insertArticle, updateArticleStatus } from '@/services/storage/article-store';
 import { revalidatePath } from 'next/cache';
@@ -40,6 +40,7 @@ export async function POST() {
             content: s.content,
             imageUrl: s.imageUrl,
             curatedSummary: s.curatedSummary,
+            keyFacts: s.keyFacts as string[] | null,
             usageCount: s.usageCount ?? 0,
             usageWeight: Number(s.usageWeight ?? 1),
             lastUsedAt: s.lastUsedAt?.toISOString() ?? null,
@@ -55,6 +56,15 @@ export async function POST() {
 
         // Step 4: Save article to DB
         const articleId = await insertArticle(result);
+
+        // Track usage and apply cooldowns/weight decay
+        await markSourcesAsUsed(result.selectedIds, result.roleAssignments as any);
+
+        // Cache newly curated summaries back to sources
+        if (result.newlyCuratedSources && result.newlyCuratedSources.length > 0) {
+            await updateSourceCurations(result.newlyCuratedSources);
+            console.log(`[pipeline/run] Cached ${result.newlyCuratedSources.length} new curations.`);
+        }
 
         // Auto-publish by default for the MVP, or based on env config
         if (process.env.AUTO_PUBLISH !== 'false') {
