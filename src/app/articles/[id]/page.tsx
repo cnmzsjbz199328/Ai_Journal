@@ -60,7 +60,7 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
                     </header>
 
                     {/* Article Body */}
-                    <article className="font-serif">
+                    <article className="font-serif max-w-none w-full">
                         <MarkdownRenderer content={article.content} />
                     </article>
 
