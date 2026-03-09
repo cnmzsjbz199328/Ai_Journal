@@ -55,7 +55,7 @@ export default async function HomePage() {
               {featured.title}
             </h1>
             <p className="text-xl text-slate-600 font-serif leading-relaxed max-w-2xl">
-              {featured.theme}
+              {featured.abstract || featured.theme}
             </p>
             <div className="flex items-center space-x-6 text-sm text-slate-400 font-sans font-medium uppercase tracking-widest">
               <span className="flex items-center"><Calendar className="w-4 h-4 mr-2" /> {new Date(featured.publishedAt!).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
@@ -81,7 +81,7 @@ export default async function HomePage() {
             <div className="absolute inset-x-0 bottom-0 p-8 bg-black/60 backdrop-blur-md border-t border-white/20 text-white space-y-4">
               <span className="text-xs font-black uppercase tracking-widest text-blue-300">Abstract Preview</span>
               <p className="text-sm font-serif line-clamp-4 leading-relaxed opacity-90 italic">
-                "{featured.theme}" is a multi-modal investigation into the synthetic connections across heterogeneous data silos.
+                {featured.abstract || `"${featured.theme}" is a multi-modal investigation into the synthetic connections across heterogeneous data silos.`}
               </p>
             </div>
           </div>
@@ -110,7 +110,7 @@ export default async function HomePage() {
                   </h3>
                 </Link>
                 <p className="text-slate-500 font-serif text-base line-clamp-3 italic">
-                  {article.theme}
+                  {article.abstract || article.theme}
                 </p>
                 <div className="text-xs font-sans font-medium text-slate-400 flex items-center">
                   {new Date(article.publishedAt!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {article.wordCount} words

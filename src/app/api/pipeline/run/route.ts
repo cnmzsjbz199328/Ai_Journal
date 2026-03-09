@@ -8,7 +8,6 @@ import { runCrawl } from '@/services/crawler/crawl-runner';
 import { getActiveSources } from '@/services/storage/source-store';
 import { runPipeline } from '@/services/ai/pipeline';
 import { insertArticle, updateArticleStatus } from '@/services/storage/article-store';
-import { postArticleTeaser } from '@/services/publishing/twitter';
 import { revalidatePath } from 'next/cache';
 import type { SourceItem, UsageRole } from '@/types';
 
@@ -70,9 +69,6 @@ export async function POST() {
         const appUrl = process.env.NEXT_PUBLIC_SITE_URL ||
             (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
         const articleUrl = `${appUrl}/articles/${articleId}`;
-
-        // Fire and forget social media post
-        await postArticleTeaser(articleId, result.article.title, result.theme, articleUrl);
 
         return NextResponse.json({
             success: true,

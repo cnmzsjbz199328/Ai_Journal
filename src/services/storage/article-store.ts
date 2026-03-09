@@ -22,6 +22,7 @@ export async function insertArticle(result: PipelineResult): Promise<string> {
         .insert(articles)
         .values({
             title: result.article.title,
+            abstract: result.article.abstract,
             content: result.article.content,
             theme: result.theme,
             outline: result.outline,
@@ -57,6 +58,7 @@ export async function getArticles(params: ArticleListParams = {}) {
         .select({
             id: articles.id,
             title: articles.title,
+            abstract: articles.abstract,
             theme: articles.theme,
             category: articles.category,
             wordCount: articles.wordCount,

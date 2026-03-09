@@ -12,7 +12,7 @@ import { TOKEN_BUDGET } from '@/config/constants';
 const SYSTEM_PROMPT = `You are a writer for a satirical academic journal.
 Your articles APPEAR scholarly and well-researched, but draw unexpected connections between unrelated domains.
 The tone is deadpan serious — the humor comes from juxtaposition.
-Respond with ONLY valid JSON containing "title" and "content" (Markdown) fields.`;
+Respond with ONLY valid JSON containing "title", "abstract" (2-3 sentences), and "content" (Markdown) fields.`;
 
 function buildPrompt(input: GeneratorInput): string {
     const sourcesText = input.sources
@@ -32,9 +32,10 @@ ${sourcesText}
 Write a full article (${TOKEN_BUDGET.stage2.targetWordCount.min}-${TOKEN_BUDGET.stage2.targetWordCount.max} words) following the outline.
 Include at least one fabricated-but-plausible citation.
 End with a thought-provoking (but absurd) conclusion.
+Also write a concise, compelling 2-3 sentence abstract summarizing the core mechanism or argument.
 
 Respond in JSON:
-{"title": "Your Article Title", "content": "# Title\\n\\n## Section 1\\n..."}`;
+{"title": "Your Article Title", "abstract": "Your compelling 2-3 sentence abstract...", "content": "# Title\\n\\n## Section 1\\n..."}`;
 }
 
 function buildFallback(input: GeneratorInput): GeneratorOutput {
@@ -47,7 +48,7 @@ function buildFallback(input: GeneratorInput): GeneratorOutput {
         }).join('\n\n'),
     ].join('\n');
 
-    return { title: input.theme, content, wordCount: content.split(/\s+/).length };
+    return { title: input.theme, abstract: 'An unexpected connection across disciplines.', content, wordCount: content.split(/\s+/).length };
 }
 
 export async function generateArticle(
@@ -61,7 +62,7 @@ export async function generateArticle(
         try {
             const parsed = JSON.parse(
                 (cleaned.match(/\{[\s\S]*\}/) ?? [cleaned])[0],
-            ) as { title: string; content: string };
+            ) as { title: string; abstract: string; content: string };
 
             if (!parsed.title || !parsed.content || parsed.content.length < 200) {
                 throw new Error('Generator: article content too short');
@@ -72,7 +73,7 @@ export async function generateArticle(
             // Fallback: treat the whole cleaned text as Markdown content
             if (cleaned.length > 200) {
                 const firstLine = cleaned.split('\n')[0].replace(/^#+\s*/, '');
-                return { title: firstLine || input.theme, content: cleaned, wordCount: cleaned.split(/\s+/).length };
+                return { title: firstLine || input.theme, abstract: 'Abstract extracted from fallback generation.', content: cleaned, wordCount: cleaned.split(/\s+/).length };
             }
             throw new Error('Generator: response too short to use');
         }

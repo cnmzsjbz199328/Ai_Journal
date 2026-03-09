@@ -55,6 +55,7 @@ async function main() {
         console.log(`\n🎉 Success! Article generated and inserted!
 Article ID: ${articleId}
 Title: ${result.article.title}
+Abstract: ${result.article.abstract}
 Theme: ${result.theme}
 Word Count: ${result.article.wordCount}
         `);

@@ -57,6 +57,7 @@ export interface GeneratorInput {
 
 export interface GeneratorOutput {
     title: string;
+    abstract: string;
     content: string; // Markdown
     wordCount: number;
 }

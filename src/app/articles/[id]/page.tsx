@@ -44,7 +44,7 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
                         </div>
                         {article.theme && (
                             <p className="text-xl text-slate-600 font-serif italic border-l-4 border-accent pl-6 py-2 leading-relaxed">
-                                {article.theme}
+                                {article.abstract || article.theme}
                             </p>
                         )}
                         {coverImage && (

@@ -74,6 +74,7 @@ export const articles = pgTable(
     {
         id: uuid('id').defaultRandom().primaryKey(),
         title: text('title').notNull(),
+        abstract: text('abstract'),
         content: text('content').notNull(),
         theme: text('theme').notNull(),
         outline: jsonb('outline').$type<string[]>().notNull(),
@@ -102,29 +103,6 @@ export const articles = pgTable(
         index('idx_articles_status').on(table.status),
         index('idx_articles_category').on(table.category),
         index('idx_articles_created_at').on(table.createdAt),
-    ],
-);
-
-// ---------- social_posts ----------
-
-export const socialPosts = pgTable(
-    'social_posts',
-    {
-        id: uuid('id').defaultRandom().primaryKey(),
-        articleId: uuid('article_id')
-            .notNull()
-            .references(() => articles.id, { onDelete: 'cascade' }),
-        platform: varchar('platform', { length: 20 }).notNull(),
-        postContent: text('post_content').notNull(),
-        postUrl: text('post_url'),
-        status: varchar('status', { length: 20 }).default('pending'),
-        errorMessage: text('error_message'),
-        postedAt: timestamp('posted_at', { withTimezone: true }),
-        createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-    },
-    (table) => [
-        index('idx_social_posts_article_id').on(table.articleId),
-        index('idx_social_posts_status').on(table.status),
     ],
 );
 
