@@ -42,9 +42,23 @@ export const SOURCE_CONFIGS: Record<string, SourceConfig> = {
         crawlFrequency: '2h',
         maxItems: 10,
     },
-    HACKERNEWS: {
-        url: 'https://hacker-news.firebaseio.com/v0',
-        name: 'Hacker News',
+    PHYS_ORG: {
+        url: 'https://phys.org/rss-feed/',
+        name: 'Phys.org',
+        category: 'science',
+        crawlFrequency: '30min',
+        maxItems: 10,
+    },
+    QUANTA: {
+        url: 'https://www.quantamagazine.org/feed/',
+        name: 'Quanta Magazine',
+        category: 'science',
+        crawlFrequency: '1h',
+        maxItems: 5,
+    },
+    THE_REGISTER: {
+        url: 'https://www.theregister.com/headlines.rss',
+        name: 'The Register',
         category: 'technology',
         crawlFrequency: '30min',
         maxItems: 10,
