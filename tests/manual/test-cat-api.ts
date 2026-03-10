@@ -1,3 +1,13 @@
+interface CatBreed {
+    name: string;
+    temperament: string;
+    description: string;
+    wikipedia_url?: string;
+    image?: {
+        url: string;
+    };
+}
+
 async function testCatSource() {
     console.log("--- Testing Cat API as Data Source ---");
     const THE_CAT_API_BASE = 'https://api.thecatapi.com/v1';
@@ -10,10 +20,10 @@ async function testCatSource() {
 
         if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
 
-        const breeds = await response.json();
+        const breeds = (await response.json()) as CatBreed[];
         console.log(`Successfully fetched ${breeds.length} breeds.`);
 
-        breeds.forEach((breed, index) => {
+        breeds.forEach((breed, index: number) => {
             console.log(`\n[Source ${index + 1}]`);
             console.log(`Title: ${breed.name}`);
             console.log(`Abstract: ${breed.temperament}`);
@@ -27,7 +37,8 @@ async function testCatSource() {
         });
 
     } catch (error) {
-        console.error("Test failed:", error.message);
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error("Test failed:", msg);
     }
 }
 

@@ -19,7 +19,8 @@ async function debugCatApi() {
             }
         }
     } catch (e) {
-        console.error("Debug failed:", e.message);
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error("Debug failed:", errorMessage);
     }
 }
 debugCatApi();

@@ -5,6 +5,18 @@
 import { insertSources } from '../../src/services/storage/source-store';
 import { RawFeedItem } from '../../src/services/crawler/types';
 
+interface CatBreed {
+    id: string;
+    name: string;
+    temperament: string;
+    description: string;
+    wikipedia_url?: string;
+    reference_image_id?: string;
+    image?: {
+        url: string;
+    };
+}
+
 async function seedCats() {
     console.log("🚀 Initializing Cat Data Seeding Pipeline...");
     const API_URL = 'https://api.thecatapi.com/v1/breeds';
@@ -16,11 +28,11 @@ async function seedCats() {
         });
 
         if (!response.ok) throw new Error(`Fetch failed with HTTP ${response.status}`);
-        const breeds = await response.json();
+        const breeds = (await response.json()) as CatBreed[];
 
         console.log(`📊 Received ${breeds.length} breeds. Mapping to RawFeedItem...`);
 
-        const sourceItems: RawFeedItem[] = breeds.map((breed: any) => {
+        const sourceItems: RawFeedItem[] = breeds.map((breed) => {
             // Construct Image URL: Priority: breed.image.url > reference_image_id > null
             let imageUrl = breed.image?.url || null;
             if (!imageUrl && breed.reference_image_id) {
@@ -45,8 +57,9 @@ async function seedCats() {
         console.log(`✅ Success! ${count} records processed and synced.`);
         console.log("Note: If the count is 0, all items already existed in the DB.");
 
-    } catch (error: any) {
-        console.error("❌ Seeding failed:", error.message);
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error("❌ Seeding failed:", msg);
         process.exit(1);
     }
 }
